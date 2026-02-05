@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "hardlink-manager"
+version = "0.1.0"
+description = "A hardlink-based file indexing and management system"
+requires-python = ">=3.10"
+
+[project.scripts]
+hardlink-manager = "hardlink_manager.main:main"
