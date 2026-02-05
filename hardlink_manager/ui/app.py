@@ -213,7 +213,11 @@ class HardlinkManagerApp:
             messagebox.showinfo("No File Selected", "Please select a file first.", parent=self.root)
             return
         search_dirs = self._root_dirs if self._root_dirs else [os.path.dirname(selected)]
-        ViewHardlinksDialog(self.root, selected, search_dirs)
+        try:
+            dlg = ViewHardlinksDialog(self.root, selected, search_dirs)
+            self.root.wait_window(dlg)
+        except Exception as e:
+            messagebox.showerror("Error", str(e), parent=self.root)
 
     def _delete_hardlink_action(self):
         selected = self.file_list.get_selected_file()
