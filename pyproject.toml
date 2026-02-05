@@ -8,5 +8,9 @@ version = "0.1.0"
 description = "A hardlink-based file indexing and management system"
 requires-python = ">=3.10"
 
+[project.optional-dependencies]
+build = ["pyinstaller>=6.0"]
+dev = ["pytest>=7.0"]
+
 [project.scripts]
 hardlink-manager = "hardlink_manager.main:main"
