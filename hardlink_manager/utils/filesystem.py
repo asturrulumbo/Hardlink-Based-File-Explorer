@@ -62,3 +62,16 @@ def is_same_volume(path1: str, path2: str) -> bool:
 def is_regular_file(path: str) -> bool:
     """Check if a path points to a regular file (not a directory/symlink)."""
     return os.path.isfile(path) and not os.path.islink(path)
+
+
+def open_file(path: str) -> None:
+    """Open a file with the system's default application."""
+    import subprocess
+
+    system = platform.system()
+    if system == "Windows":
+        os.startfile(path)
+    elif system == "Darwin":
+        subprocess.Popen(["open", path])
+    else:
+        subprocess.Popen(["xdg-open", path])

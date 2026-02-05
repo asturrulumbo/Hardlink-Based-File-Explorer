@@ -245,3 +245,80 @@ class DeleteHardlinkDialog(tk.Toplevel):
             self.destroy()
         except Exception as e:
             messagebox.showerror("Error Deleting", str(e), parent=self)
+
+
+class RenameDialog(tk.Toplevel):
+    """Dialog for renaming a file."""
+
+    def __init__(self, parent, file_path: str):
+        super().__init__(parent)
+        self.title("Rename File")
+        self.file_path = file_path
+        self.new_path = None  # set on success
+        self.transient(parent)
+        self.grab_set()
+
+        self.minsize(450, 130)
+        self._build_ui()
+        self._center_on_parent(parent)
+
+    def _center_on_parent(self, parent):
+        self.update_idletasks()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        w, h = self.winfo_width(), self.winfo_height()
+        x = px + (pw - w) // 2
+        y = py + (ph - h) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _build_ui(self):
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="New name:").pack(anchor=tk.W, pady=(0, 2))
+
+        old_name = os.path.basename(self.file_path)
+        self.name_var = tk.StringVar(value=old_name)
+        entry = ttk.Entry(frame, textvariable=self.name_var, width=60)
+        entry.pack(fill=tk.X, pady=(0, 10))
+
+        # Pre-select the name part before the extension
+        dot = old_name.rfind(".")
+        entry.focus_set()
+        if dot > 0:
+            entry.selection_range(0, dot)
+            entry.icursor(dot)
+        else:
+            entry.selection_range(0, tk.END)
+
+        entry.bind("<Return>", lambda e: self._on_rename())
+        entry.bind("<Escape>", lambda e: self.destroy())
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack()
+        ttk.Button(btn_frame, text="Rename", command=self._on_rename).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=5)
+
+    def _on_rename(self):
+        new_name = self.name_var.get().strip()
+        if not new_name:
+            messagebox.showwarning("Empty Name", "Please enter a file name.", parent=self)
+            return
+
+        old_name = os.path.basename(self.file_path)
+        if new_name == old_name:
+            self.destroy()
+            return
+
+        new_path = os.path.join(os.path.dirname(self.file_path), new_name)
+
+        if os.path.exists(new_path):
+            messagebox.showerror("Name Taken", f"A file named '{new_name}' already exists.", parent=self)
+            return
+
+        try:
+            os.rename(self.file_path, new_path)
+            self.new_path = new_path
+            self.destroy()
+        except Exception as e:
+            messagebox.showerror("Error Renaming", str(e), parent=self)

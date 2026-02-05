@@ -118,9 +118,11 @@ class FileListPanel(ttk.Frame):
     HEADERS = {"name": "Name", "size": "Size", "hardlinks": "Links", "inode": "Inode"}
     WIDTHS = {"name": 300, "size": 80, "hardlinks": 60, "inode": 100}
 
-    def __init__(self, parent, on_file_select: Optional[Callable[[str], None]] = None):
+    def __init__(self, parent, on_file_select: Optional[Callable[[str], None]] = None,
+                 on_file_open: Optional[Callable[[str], None]] = None):
         super().__init__(parent)
         self.on_file_select = on_file_select
+        self.on_file_open = on_file_open
         self.current_dir: Optional[str] = None
         self._file_paths: dict[str, str] = {}  # tree item id -> file path
 
@@ -231,7 +233,9 @@ class FileListPanel(ttk.Frame):
                 self.on_file_select(path)
 
     def _on_double_click(self, event):
-        pass  # Could be extended for file opening
+        path = self.get_selected_file()
+        if path and self.on_file_open:
+            self.on_file_open(path)
 
     def _sort_by(self, col: str):
         if col == self._sort_col:

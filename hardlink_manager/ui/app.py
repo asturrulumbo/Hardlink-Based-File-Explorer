@@ -10,9 +10,10 @@ from hardlink_manager.ui.search_panel import SearchPanel
 from hardlink_manager.ui.dialogs import (
     CreateHardlinkDialog,
     DeleteHardlinkDialog,
+    RenameDialog,
     ViewHardlinksDialog,
 )
-from hardlink_manager.utils.filesystem import format_file_size, get_hardlink_count, get_inode
+from hardlink_manager.utils.filesystem import format_file_size, get_hardlink_count, get_inode, open_file
 
 
 class HardlinkManagerApp:
@@ -46,6 +47,9 @@ class HardlinkManagerApp:
         # Actions menu
         actions_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Actions", menu=actions_menu)
+        actions_menu.add_command(label="Open File", command=self._open_file_action)
+        actions_menu.add_command(label="Rename...", command=self._rename_action)
+        actions_menu.add_separator()
         actions_menu.add_command(label="Create Hardlink...", command=self._create_hardlink_action)
         actions_menu.add_command(label="View Hardlinks...", command=self._view_hardlinks_action)
         actions_menu.add_command(label="Delete Hardlink...", command=self._delete_hardlink_action)
@@ -82,7 +86,8 @@ class HardlinkManagerApp:
         browser_tab = ttk.Frame(self.notebook)
         self.notebook.add(browser_tab, text="File Browser")
 
-        self.file_list = FileListPanel(browser_tab, on_file_select=self._on_file_select)
+        self.file_list = FileListPanel(browser_tab, on_file_select=self._on_file_select,
+                                       on_file_open=self._open_file_action)
         self.file_list.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
         # Tab 2: Intersection Search
@@ -106,6 +111,9 @@ class HardlinkManagerApp:
 
     def _build_context_menu(self):
         self.context_menu = tk.Menu(self.root, tearoff=0)
+        self.context_menu.add_command(label="Open", command=self._open_file_action)
+        self.context_menu.add_command(label="Rename...", command=self._rename_action)
+        self.context_menu.add_separator()
         self.context_menu.add_command(label="Create Hardlink To...", command=self._create_hardlink_action)
         self.context_menu.add_command(label="View Hardlinks", command=self._view_hardlinks_action)
         self.context_menu.add_separator()
@@ -160,6 +168,29 @@ class HardlinkManagerApp:
             )
         except OSError:
             self._set_status(os.path.basename(path))
+
+    def _open_file_action(self, path: str = None):
+        selected = path or self.file_list.get_selected_file()
+        if not selected:
+            messagebox.showinfo("No File Selected", "Please select a file first.", parent=self.root)
+            return
+        try:
+            open_file(selected)
+            self._set_status(f"Opened: {os.path.basename(selected)}")
+        except Exception as e:
+            messagebox.showerror("Error Opening File", str(e), parent=self.root)
+
+    def _rename_action(self):
+        selected = self.file_list.get_selected_file()
+        if not selected:
+            messagebox.showinfo("No File Selected", "Please select a file first.", parent=self.root)
+            return
+        dlg = RenameDialog(self.root, selected)
+        self.root.wait_window(dlg)
+        if dlg.new_path:
+            self._set_status(f"Renamed to: {os.path.basename(dlg.new_path)}")
+            if self.file_list.current_dir:
+                self.file_list.load_directory(self.file_list.current_dir)
 
     def _create_hardlink_action(self):
         selected = self.file_list.get_selected_file()
