@@ -184,9 +184,11 @@ All folders and mirror groups use the same operations, regardless of archive typ
 - "Add Folder to Mirror Group" → assign folder to a group (with notifications about sync)
 - For mirror groups: "View Mirror Group Contents" → see all folders in the group
 
-### Deletion Confirmation Dialogs
-- **For mirror groups:** "This file exists in [Folder A, Folder B, Folder C]. Remove from which folders?"
-- **For Categoricum:** Simple confirmation (no mirror impact)
+### Deletion Confirmation Dialog
+- **For folders in a mirror group:** "This file exists in [Folder A, Folder B, Folder C]. Remove from all folders?" with Yes/No buttons
+  - "Yes" removes the hardlink from all folders in the group
+  - "No" cancels the deletion
+- **For independent folders (not in mirror group):** Standard file deletion confirmation
 
 ---
 
