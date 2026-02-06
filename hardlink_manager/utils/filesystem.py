@@ -75,3 +75,55 @@ def open_file(path: str) -> None:
         subprocess.Popen(["open", path])
     else:
         subprocess.Popen(["xdg-open", path])
+
+
+def open_file_with(path: str, program: str) -> None:
+    """Open a file with a specific program."""
+    import subprocess
+
+    system = platform.system()
+    if system == "Windows":
+        subprocess.Popen([program, path])
+    elif system == "Darwin":
+        subprocess.Popen(["open", "-a", program, path])
+    else:
+        subprocess.Popen([program, path])
+
+
+def copy_item(src: str, dest_dir: str, new_name: str = "") -> str:
+    """Copy a file or folder to dest_dir. Returns the destination path."""
+    import shutil
+
+    name = new_name or os.path.basename(src)
+    dest = os.path.join(dest_dir, name)
+    if os.path.exists(dest):
+        raise FileExistsError(f"'{name}' already exists in the destination.")
+    if os.path.isdir(src):
+        shutil.copytree(src, dest)
+    else:
+        shutil.copy2(src, dest)
+    return dest
+
+
+def move_item(src: str, dest_dir: str, new_name: str = "") -> str:
+    """Move a file or folder to dest_dir. Returns the destination path."""
+    import shutil
+
+    name = new_name or os.path.basename(src)
+    dest = os.path.join(dest_dir, name)
+    if os.path.exists(dest):
+        raise FileExistsError(f"'{name}' already exists in the destination.")
+    shutil.move(src, dest)
+    return dest
+
+
+def delete_item(path: str) -> None:
+    """Delete a file or folder (recursively)."""
+    import shutil
+
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+    elif os.path.exists(path):
+        os.unlink(path)
+    else:
+        raise FileNotFoundError(f"'{path}' does not exist.")

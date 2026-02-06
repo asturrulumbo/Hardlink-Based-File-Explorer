@@ -2,8 +2,9 @@
 
 import os
 import platform
+import shutil
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from hardlink_manager.core.mirror_groups import MirrorGroupRegistry
 from hardlink_manager.core.sync import delete_from_group, sync_group
@@ -17,7 +18,16 @@ from hardlink_manager.ui.dialogs import (
     RenameDialog,
     ViewHardlinksDialog,
 )
-from hardlink_manager.utils.filesystem import format_file_size, get_hardlink_count, get_inode, open_file
+from hardlink_manager.utils.filesystem import (
+    copy_item,
+    delete_item,
+    format_file_size,
+    get_hardlink_count,
+    get_inode,
+    move_item,
+    open_file,
+    open_file_with,
+)
 
 
 class HardlinkManagerApp:
@@ -32,6 +42,9 @@ class HardlinkManagerApp:
         # Track root directories for hardlink searches
         self._root_dirs: list[str] = []
 
+        # Clipboard for copy/cut operations: (path, mode) where mode is "copy" or "cut"
+        self._clipboard: tuple[str, str] | None = None
+
         # Mirror group registry and watcher
         self.registry = MirrorGroupRegistry()
         self.watcher = MirrorGroupWatcher(
@@ -42,6 +55,7 @@ class HardlinkManagerApp:
         self._build_menu()
         self._build_ui()
         self._build_context_menu()
+        self._bind_keyboard_shortcuts()
 
         # Start watcher if there are sync-enabled groups
         self._restart_watcher()
@@ -61,15 +75,24 @@ class HardlinkManagerApp:
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self._on_close)
 
+        # Edit menu
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+        edit_menu.add_command(label="Copy", accelerator="Ctrl+C", command=self._copy_action)
+        edit_menu.add_command(label="Cut", accelerator="Ctrl+X", command=self._cut_action)
+        edit_menu.add_command(label="Paste", accelerator="Ctrl+V", command=self._paste_action)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Rename...", accelerator="F2", command=self._rename_action)
+        edit_menu.add_command(label="Delete", accelerator="Del", command=self._delete_action)
+
         # Actions menu
         actions_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Actions", menu=actions_menu)
-        actions_menu.add_command(label="Open File", command=self._open_file_action)
-        actions_menu.add_command(label="Rename...", command=self._rename_action)
+        actions_menu.add_command(label="Open", command=self._open_file_action)
+        actions_menu.add_command(label="Open With...", command=self._open_with_action)
         actions_menu.add_separator()
         actions_menu.add_command(label="Create Hardlink...", command=self._create_hardlink_action)
         actions_menu.add_command(label="View Hardlinks...", command=self._view_hardlinks_action)
-        actions_menu.add_command(label="Delete...", command=self._delete_hardlink_action)
 
         # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -147,26 +170,45 @@ class HardlinkManagerApp:
         # -- File context menu --
         self.file_context_menu = tk.Menu(self.root, tearoff=0)
         self.file_context_menu.add_command(label="Open", command=self._open_file_action)
-        self.file_context_menu.add_command(label="Rename...", command=self._rename_action)
+        self.file_context_menu.add_command(label="Open With...", command=self._open_with_action)
+        self.file_context_menu.add_separator()
+        self.file_context_menu.add_command(label="Copy", command=self._copy_action)
+        self.file_context_menu.add_command(label="Cut", command=self._cut_action)
         self.file_context_menu.add_separator()
         self.file_context_menu.add_command(label="Create Hardlink To...", command=self._create_hardlink_action)
         self.file_context_menu.add_command(label="View Hardlinks", command=self._view_hardlinks_action)
         self.file_context_menu.add_separator()
-        self.file_context_menu.add_command(label="Delete...", command=self._delete_hardlink_action)
+        self.file_context_menu.add_command(label="Rename...", command=self._rename_action)
+        self.file_context_menu.add_command(label="Delete", command=self._delete_action)
 
         # -- Folder context menu --
         self.folder_context_menu = tk.Menu(self.root, tearoff=0)
         self.folder_context_menu.add_command(label="Open Folder", command=self._open_selected_folder)
         self.folder_context_menu.add_separator()
+        self.folder_context_menu.add_command(label="Copy", command=self._copy_action)
+        self.folder_context_menu.add_command(label="Cut", command=self._cut_action)
+        self.folder_context_menu.add_separator()
         self.folder_context_menu.add_command(label="Create Hardlink Mirror...", command=self._create_mirror_from_folder)
         self.folder_context_menu.add_command(label="Add to Existing Mirror...", command=self._add_folder_to_mirror)
         self.folder_context_menu.add_separator()
         self.folder_context_menu.add_command(label="Rename...", command=self._rename_action)
+        self.folder_context_menu.add_command(label="Delete", command=self._delete_action)
+
+        # -- Background context menu (right-click on empty area) --
+        self.bg_context_menu = tk.Menu(self.root, tearoff=0)
+        self.bg_context_menu.add_command(label="Paste", command=self._paste_action)
 
         # Bind right-click on the file list
         self.file_list.file_tree.bind("<Button-3>", self._show_context_menu)
         if platform.system() == "Darwin":
             self.file_list.file_tree.bind("<Button-2>", self._show_context_menu)
+
+    def _bind_keyboard_shortcuts(self):
+        self.root.bind_all("<Control-c>", lambda e: self._copy_action())
+        self.root.bind_all("<Control-x>", lambda e: self._cut_action())
+        self.root.bind_all("<Control-v>", lambda e: self._paste_action())
+        self.root.bind_all("<Delete>", lambda e: self._delete_action())
+        self.root.bind_all("<F2>", lambda e: self._rename_action())
 
     def _show_context_menu(self, event):
         item = self.file_list.file_tree.identify_row(event.y)
@@ -176,6 +218,10 @@ class HardlinkManagerApp:
                 self.folder_context_menu.tk_popup(event.x_root, event.y_root)
             else:
                 self.file_context_menu.tk_popup(event.x_root, event.y_root)
+        else:
+            # Right-click on empty area — show paste menu
+            if self._clipboard and self.file_list.current_dir:
+                self.bg_context_menu.tk_popup(event.x_root, event.y_root)
 
     # -- Watcher callbacks --
 
@@ -183,15 +229,12 @@ class HardlinkManagerApp:
         """Called from the watcher thread when files are auto-synced."""
         n = len(created)
         msg = f"Auto-synced: {os.path.basename(source)} -> {n} mirror(s)"
-        # Schedule UI update on main thread
         self.root.after(0, lambda: self._set_status(msg))
 
     def _on_mirror_groups_changed(self):
-        """Called when mirror groups are created/edited/deleted."""
         self._restart_watcher()
 
     def _restart_watcher(self):
-        """Restart the filesystem watcher to reflect current registry."""
         has_sync = any(g.sync_enabled for g in self.registry.get_all_groups())
         if has_sync:
             self.watcher.refresh()
@@ -199,26 +242,24 @@ class HardlinkManagerApp:
             self.watcher.stop()
 
     def _on_close(self):
-        """Clean shutdown."""
         self.watcher.stop()
         self.root.destroy()
 
     # -- Folder navigation callbacks --
 
     def _on_dir_select(self, path: str):
-        """Called when a directory is selected in the file list."""
         self._set_status(f"Folder: {os.path.basename(path)}")
 
     def _on_dir_open(self, path: str):
-        """Called when a directory is opened (double-click or Up button)."""
         self._set_status(f"Viewing: {path}")
 
     def _open_selected_folder(self):
-        """Navigate into the selected folder in the file list."""
         path = self.file_list.get_selected_path()
         if path and os.path.isdir(path):
             self.file_list.load_directory(path)
             self._set_status(f"Viewing: {path}")
+
+    # -- Mirror group actions --
 
     def _create_mirror_from_folder(self):
         """Create a hardlink mirror of the selected folder at a chosen location."""
@@ -226,6 +267,17 @@ class HardlinkManagerApp:
         if not source or not os.path.isdir(source):
             return
         source = os.path.abspath(source)
+        source_name = os.path.basename(source)
+
+        # Ask for the mirror folder name (default = same as source)
+        mirror_name = simpledialog.askstring(
+            "Mirror Folder Name",
+            "Name for the mirror folder:",
+            initialvalue=source_name,
+            parent=self.root,
+        )
+        if not mirror_name:
+            return
 
         # Ask where to place the mirror folder
         dest_parent = filedialog.askdirectory(
@@ -235,14 +287,12 @@ class HardlinkManagerApp:
         if not dest_parent:
             return
 
-        # Create mirror folder with same name as source
-        source_name = os.path.basename(source)
-        dest = os.path.join(dest_parent, source_name)
+        dest = os.path.join(dest_parent, mirror_name)
 
         if os.path.exists(dest):
             messagebox.showerror(
                 "Folder Exists",
-                f"A folder named '{source_name}' already exists at that location.",
+                f"A folder named '{mirror_name}' already exists at that location.",
                 parent=self.root,
             )
             return
@@ -253,33 +303,26 @@ class HardlinkManagerApp:
             messagebox.showerror("Error", f"Could not create folder:\n{e}", parent=self.root)
             return
 
-        # Register as mirror group (name auto-generated from folder names)
         group = self.registry.create_group(folders=[source, dest])
 
-        # Sync all files from source to the new mirror
         try:
             created = sync_group(group)
             n = len(created)
-            self._set_status(
-                f"Mirror created: {dest}  ({n} file(s) hardlinked)"
-            )
+            self._set_status(f"Mirror created: {dest}  ({n} file(s) hardlinked)")
         except Exception as e:
             self._set_status(f"Mirror created at {dest} (sync error: {e})")
 
         self.mirror_panel.refresh_list()
         self._on_mirror_groups_changed()
-        # Refresh file list to show the new mirror folder if we're viewing dest_parent
         if self.file_list.current_dir and os.path.normpath(self.file_list.current_dir) == os.path.normpath(dest_parent):
             self.file_list.load_directory(self.file_list.current_dir)
 
     def _add_folder_to_mirror(self):
-        """Add the selected folder to an existing mirror group."""
         path = self.file_list.get_selected_path()
         if not path or not os.path.isdir(path):
             return
         path = os.path.abspath(path)
 
-        # Check if already in a group
         existing = self.registry.find_group_for_folder(path)
         if existing:
             messagebox.showinfo(
@@ -298,7 +341,6 @@ class HardlinkManagerApp:
             )
             return
 
-        # Show picker dialog
         dlg = _GroupPickerDialog(self.root, groups)
         self.root.wait_window(dlg)
         if dlg.selected_group_id:
@@ -308,7 +350,56 @@ class HardlinkManagerApp:
             self.mirror_panel.refresh_list()
             self._on_mirror_groups_changed()
 
-    # -- Menu / action handlers --
+    # -- Clipboard operations --
+
+    def _copy_action(self):
+        selected = self.file_list.get_selected_path()
+        if not selected:
+            return
+        self._clipboard = (selected, "copy")
+        self._set_status(f"Copied: {os.path.basename(selected)}")
+
+    def _cut_action(self):
+        selected = self.file_list.get_selected_path()
+        if not selected:
+            return
+        self._clipboard = (selected, "cut")
+        self._set_status(f"Cut: {os.path.basename(selected)}")
+
+    def _paste_action(self):
+        if not self._clipboard:
+            self._set_status("Nothing to paste.")
+            return
+        if not self.file_list.current_dir:
+            self._set_status("Open a folder first.")
+            return
+
+        src, mode = self._clipboard
+        dest_dir = self.file_list.current_dir
+
+        if not os.path.exists(src):
+            self._set_status(f"Source no longer exists: {src}")
+            self._clipboard = None
+            return
+
+        try:
+            if mode == "copy":
+                result = copy_item(src, dest_dir)
+                self._set_status(f"Pasted (copy): {os.path.basename(result)}")
+            else:  # cut
+                result = move_item(src, dest_dir)
+                self._set_status(f"Moved: {os.path.basename(result)}")
+                self._clipboard = None  # Clear clipboard after move
+        except FileExistsError as e:
+            messagebox.showerror("Paste Error", str(e), parent=self.root)
+            return
+        except Exception as e:
+            messagebox.showerror("Paste Error", str(e), parent=self.root)
+            return
+
+        self.file_list.load_directory(self.file_list.current_dir)
+
+    # -- File/folder menu actions --
 
     def _open_folder(self):
         d = filedialog.askdirectory(parent=self.root, title="Open Folder")
@@ -356,6 +447,33 @@ class HardlinkManagerApp:
         except Exception as e:
             messagebox.showerror("Error Opening File", str(e), parent=self.root)
 
+    def _open_with_action(self):
+        selected = self.file_list.get_selected_file()
+        if not selected:
+            messagebox.showinfo("No File Selected", "Please select a file first.", parent=self.root)
+            return
+
+        system = platform.system()
+        if system == "Windows":
+            # Use the Windows "Open With" dialog
+            import subprocess
+            subprocess.Popen(["rundll32.exe", "shell32.dll,OpenAs_RunDLL", selected])
+            self._set_status(f"Open With: {os.path.basename(selected)}")
+        else:
+            # Let the user browse for a program
+            filetypes = [("All files", "*")] if system != "Darwin" else [("Applications", "*.app"), ("All files", "*")]
+            program = filedialog.askopenfilename(
+                parent=self.root,
+                title="Choose program to open with",
+                filetypes=filetypes,
+            )
+            if program:
+                try:
+                    open_file_with(selected, program)
+                    self._set_status(f"Opened with {os.path.basename(program)}: {os.path.basename(selected)}")
+                except Exception as e:
+                    messagebox.showerror("Error", str(e), parent=self.root)
+
     def _rename_action(self):
         selected = self.file_list.get_selected_path()
         if not selected:
@@ -394,37 +512,54 @@ class HardlinkManagerApp:
         except Exception as e:
             messagebox.showerror("Error", str(e), parent=self.root)
 
-    def _delete_hardlink_action(self):
-        selected = self.file_list.get_selected_file()
+    def _delete_action(self):
+        """Delete the selected file or folder."""
+        selected = self.file_list.get_selected_path()
         if not selected:
-            messagebox.showinfo("No File Selected", "Please select a file first.", parent=self.root)
+            messagebox.showinfo("No Selection", "Please select a file or folder first.", parent=self.root)
             return
 
-        # Check if this file's folder is in a mirror group
-        folder = os.path.dirname(os.path.abspath(selected))
-        group = self.registry.find_group_for_folder(folder)
+        is_dir = os.path.isdir(selected)
 
-        if group is not None:
-            # Mirror group deletion: ask to remove from all group folders
-            folder_list = "\n".join(f"  - {f}" for f in group.folders)
-            msg = (f"This file is mirrored across:\n\n"
-                   f"{folder_list}\n\n"
-                   f"Remove from all folders?")
-            if messagebox.askyesno("Delete from Mirror Group", msg, parent=self.root):
-                try:
-                    deleted = delete_from_group(selected, group)
-                    self._set_status(
-                        f"Deleted from {len(deleted)} folder(s)."
-                    )
-                except Exception as e:
-                    messagebox.showerror("Error", str(e), parent=self.root)
+        if is_dir:
+            # Folder deletion
+            name = os.path.basename(selected)
+            if not messagebox.askyesno(
+                "Delete Folder",
+                f"Delete folder '{name}' and all its contents?\n\n"
+                f"Path: {selected}\n\n"
+                "This cannot be undone.",
+                parent=self.root,
+            ):
+                return
+            try:
+                delete_item(selected)
+                self._set_status(f"Deleted folder: {name}")
+            except Exception as e:
+                messagebox.showerror("Error", str(e), parent=self.root)
+                return
         else:
-            # Independent folder: standard deletion dialog
-            search_dirs = self._root_dirs if self._root_dirs else [os.path.dirname(selected)]
-            dlg = DeleteHardlinkDialog(self.root, selected, search_dirs)
-            self.root.wait_window(dlg)
-            if dlg.deleted:
-                self._set_status(f"Deleted: {selected}")
+            # File deletion — mirror-group aware
+            folder = os.path.dirname(os.path.abspath(selected))
+            group = self.registry.find_group_for_folder(folder)
+
+            if group is not None:
+                folder_list = "\n".join(f"  - {f}" for f in group.folders)
+                msg = (f"This file is mirrored across:\n\n"
+                       f"{folder_list}\n\n"
+                       f"Remove from all folders?")
+                if messagebox.askyesno("Delete from Mirror Group", msg, parent=self.root):
+                    try:
+                        deleted = delete_from_group(selected, group)
+                        self._set_status(f"Deleted from {len(deleted)} folder(s).")
+                    except Exception as e:
+                        messagebox.showerror("Error", str(e), parent=self.root)
+            else:
+                search_dirs = self._root_dirs if self._root_dirs else [os.path.dirname(selected)]
+                dlg = DeleteHardlinkDialog(self.root, selected, search_dirs)
+                self.root.wait_window(dlg)
+                if dlg.deleted:
+                    self._set_status(f"Deleted: {selected}")
 
         if self.file_list.current_dir:
             self.file_list.load_directory(self.file_list.current_dir)

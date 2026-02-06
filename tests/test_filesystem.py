@@ -4,11 +4,14 @@ import os
 import pytest
 
 from hardlink_manager.utils.filesystem import (
+    copy_item,
+    delete_item,
     format_file_size,
     get_hardlink_count,
     get_inode,
     is_regular_file,
     is_same_volume,
+    move_item,
 )
 
 
@@ -102,3 +105,105 @@ class TestIsRegularFile:
         link = tmp_path / "symlink.txt"
         link.symlink_to(f)
         assert not is_regular_file(str(link))
+
+
+class TestCopyItem:
+    def test_copy_file(self, tmp_path):
+        src = tmp_path / "source.txt"
+        src.write_text("content")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        result = copy_item(str(src), str(dest_dir))
+        assert os.path.exists(result)
+        assert open(result).read() == "content"
+        # Original still exists
+        assert os.path.exists(str(src))
+
+    def test_copy_folder(self, tmp_path):
+        src_dir = tmp_path / "src_folder"
+        src_dir.mkdir()
+        (src_dir / "a.txt").write_text("a")
+        (src_dir / "b.txt").write_text("b")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        result = copy_item(str(src_dir), str(dest_dir))
+        assert os.path.isdir(result)
+        assert (dest_dir / "src_folder" / "a.txt").read_text() == "a"
+        assert (dest_dir / "src_folder" / "b.txt").read_text() == "b"
+
+    def test_copy_with_new_name(self, tmp_path):
+        src = tmp_path / "source.txt"
+        src.write_text("data")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        result = copy_item(str(src), str(dest_dir), new_name="renamed.txt")
+        assert os.path.basename(result) == "renamed.txt"
+        assert open(result).read() == "data"
+
+    def test_copy_file_exists_error(self, tmp_path):
+        src = tmp_path / "source.txt"
+        src.write_text("data")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        (dest_dir / "source.txt").write_text("existing")
+        with pytest.raises(FileExistsError):
+            copy_item(str(src), str(dest_dir))
+
+
+class TestMoveItem:
+    def test_move_file(self, tmp_path):
+        src = tmp_path / "source.txt"
+        src.write_text("content")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        result = move_item(str(src), str(dest_dir))
+        assert os.path.exists(result)
+        assert not os.path.exists(str(src))
+
+    def test_move_folder(self, tmp_path):
+        src_dir = tmp_path / "src_folder"
+        src_dir.mkdir()
+        (src_dir / "file.txt").write_text("data")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        result = move_item(str(src_dir), str(dest_dir))
+        assert os.path.isdir(result)
+        assert not os.path.exists(str(src_dir))
+        assert (dest_dir / "src_folder" / "file.txt").read_text() == "data"
+
+    def test_move_with_new_name(self, tmp_path):
+        src = tmp_path / "source.txt"
+        src.write_text("data")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        result = move_item(str(src), str(dest_dir), new_name="moved.txt")
+        assert os.path.basename(result) == "moved.txt"
+        assert not os.path.exists(str(src))
+
+    def test_move_file_exists_error(self, tmp_path):
+        src = tmp_path / "source.txt"
+        src.write_text("data")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        (dest_dir / "source.txt").write_text("existing")
+        with pytest.raises(FileExistsError):
+            move_item(str(src), str(dest_dir))
+
+
+class TestDeleteItem:
+    def test_delete_file(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("data")
+        delete_item(str(f))
+        assert not os.path.exists(str(f))
+
+    def test_delete_folder(self, tmp_path):
+        d = tmp_path / "folder"
+        d.mkdir()
+        (d / "file.txt").write_text("data")
+        delete_item(str(d))
+        assert not os.path.exists(str(d))
+
+    def test_delete_nonexistent(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            delete_item(str(tmp_path / "nonexistent"))
