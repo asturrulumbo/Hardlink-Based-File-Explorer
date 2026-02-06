@@ -189,11 +189,17 @@ class MirrorGroupDialog(tk.Toplevel):
     """Dialog for creating or editing a mirror group."""
 
     def __init__(self, parent, title: str = "Mirror Group",
-                 group: Optional[MirrorGroup] = None):
+                 group: Optional[MirrorGroup] = None,
+                 initial_folders: Optional[list[str]] = None):
         super().__init__(parent)
         self.title(title)
         self.result = None  # set on OK
-        self._folders: list[str] = list(group.folders) if group else []
+        if group:
+            self._folders: list[str] = list(group.folders)
+        elif initial_folders:
+            self._folders = list(initial_folders)
+        else:
+            self._folders = []
         self._group = group
         self.transient(parent)
         self.grab_set()

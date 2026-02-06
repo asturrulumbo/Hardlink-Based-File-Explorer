@@ -112,24 +112,35 @@ class DirectoryTree(ttk.Frame):
 
 
 class FileListPanel(ttk.Frame):
-    """Panel showing the contents of a directory with file metadata."""
+    """Panel showing the contents of a directory with file metadata.
 
-    COLUMNS = ("name", "size", "hardlinks", "inode")
-    HEADERS = {"name": "Name", "size": "Size", "hardlinks": "Links", "inode": "Inode"}
-    WIDTHS = {"name": 300, "size": 80, "hardlinks": 60, "inode": 100}
+    Displays both folders and files like Windows Explorer, with folders first.
+    Double-clicking a folder navigates into it. Double-clicking a file opens it.
+    """
+
+    COLUMNS = ("name", "type", "size", "hardlinks", "inode")
+    HEADERS = {"name": "Name", "type": "Type", "size": "Size", "hardlinks": "Links", "inode": "Inode"}
+    WIDTHS = {"name": 280, "type": 70, "size": 80, "hardlinks": 60, "inode": 100}
 
     def __init__(self, parent, on_file_select: Optional[Callable[[str], None]] = None,
-                 on_file_open: Optional[Callable[[str], None]] = None):
+                 on_file_open: Optional[Callable[[str], None]] = None,
+                 on_dir_select: Optional[Callable[[str], None]] = None,
+                 on_dir_open: Optional[Callable[[str], None]] = None):
         super().__init__(parent)
         self.on_file_select = on_file_select
         self.on_file_open = on_file_open
+        self.on_dir_select = on_dir_select
+        self.on_dir_open = on_dir_open
         self.current_dir: Optional[str] = None
-        self._file_paths: dict[str, str] = {}  # tree item id -> file path
+        self._item_paths: dict[str, str] = {}   # tree item id -> filesystem path
+        self._item_is_dir: dict[str, bool] = {}  # tree item id -> True if directory
 
-        # Path bar
-        self.path_var = tk.StringVar()
+        # Path bar with Up button
         path_bar = ttk.Frame(self)
         path_bar.pack(fill=tk.X, pady=(0, 2))
+        self._up_btn = ttk.Button(path_bar, text="\u2191 Up", width=5, command=self._go_up)
+        self._up_btn.pack(side=tk.LEFT, padx=(0, 5))
+        self.path_var = tk.StringVar()
         ttk.Label(path_bar, text="Path:").pack(side=tk.LEFT, padx=(0, 5))
         ttk.Label(path_bar, textvariable=self.path_var, relief=tk.SUNKEN, padding=2).pack(
             side=tk.LEFT, fill=tk.X, expand=True
@@ -147,7 +158,7 @@ class FileListPanel(ttk.Frame):
         )
         for col in self.COLUMNS:
             self.file_tree.heading(col, text=self.HEADERS[col], command=lambda c=col: self._sort_by(c))
-            anchor = tk.W if col == "name" else tk.E
+            anchor = tk.W if col in ("name", "type") else tk.E
             self.file_tree.column(col, width=self.WIDTHS[col], anchor=anchor)
 
         scrollbar_y = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.file_tree.yview)
@@ -167,11 +178,12 @@ class FileListPanel(ttk.Frame):
         self._sort_reverse = False
 
     def load_directory(self, path: str):
-        """Load and display the contents of a directory."""
+        """Load and display the contents of a directory (folders first, then files)."""
         path = os.path.abspath(path)
         self.current_dir = path
         self.path_var.set(path)
-        self._file_paths.clear()
+        self._item_paths.clear()
+        self._item_is_dir.clear()
 
         # Clear existing items
         for item in self.file_tree.get_children():
@@ -180,62 +192,119 @@ class FileListPanel(ttk.Frame):
         if not os.path.isdir(path):
             return
 
-        entries = []
+        dir_entries = []
+        file_entries = []
         try:
             for entry in os.scandir(path):
-                if entry.is_file(follow_symlinks=False):
-                    try:
-                        st = entry.stat()
-                        entries.append({
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        dir_entries.append({
                             "name": entry.name,
-                            "size": st.st_size,
+                            "type": "Folder",
+                            "size": "",
+                            "hardlinks": "",
+                            "inode": "",
+                            "path": entry.path,
+                            "is_dir": True,
+                        })
+                    elif entry.is_file(follow_symlinks=False):
+                        st = entry.stat()
+                        file_entries.append({
+                            "name": entry.name,
+                            "type": "File",
+                            "size": format_file_size(st.st_size),
                             "hardlinks": st.st_nlink,
                             "inode": st.st_ino,
                             "path": entry.path,
+                            "is_dir": False,
                         })
-                    except OSError:
-                        entries.append({
-                            "name": entry.name,
-                            "size": 0,
-                            "hardlinks": 0,
-                            "inode": 0,
-                            "path": entry.path,
-                        })
+                except OSError:
+                    continue
         except PermissionError:
             return
 
-        # Sort
-        entries.sort(key=lambda e: e["name"].lower())
+        # Sort: folders first (alphabetical), then files (alphabetical)
+        dir_entries.sort(key=lambda e: e["name"].lower())
+        file_entries.sort(key=lambda e: e["name"].lower())
 
-        for e in entries:
+        for e in dir_entries + file_entries:
             item_id = self.file_tree.insert(
                 "",
                 tk.END,
                 values=(
                     e["name"],
-                    format_file_size(e["size"]),
+                    e["type"],
+                    e["size"],
                     e["hardlinks"],
                     e["inode"],
                 ),
             )
-            self._file_paths[item_id] = e["path"]
+            self._item_paths[item_id] = e["path"]
+            self._item_is_dir[item_id] = e["is_dir"]
 
     def get_selected_file(self) -> Optional[str]:
+        """Get the selected file path (returns None if a folder is selected)."""
         sel = self.file_tree.selection()
         if sel:
-            return self._file_paths.get(sel[0])
+            item_id = sel[0]
+            if not self._item_is_dir.get(item_id, False):
+                return self._item_paths.get(item_id)
         return None
 
+    def get_selected_path(self) -> Optional[str]:
+        """Get the selected path (file or folder)."""
+        sel = self.file_tree.selection()
+        if sel:
+            return self._item_paths.get(sel[0])
+        return None
+
+    def is_selected_dir(self) -> bool:
+        """Check whether the currently selected item is a directory."""
+        sel = self.file_tree.selection()
+        if sel:
+            return self._item_is_dir.get(sel[0], False)
+        return False
+
+    def _go_up(self):
+        """Navigate to the parent directory."""
+        if self.current_dir:
+            parent = os.path.dirname(self.current_dir)
+            if parent and parent != self.current_dir:
+                self.load_directory(parent)
+                if self.on_dir_open:
+                    self.on_dir_open(parent)
+
     def _on_select(self, event):
-        if self.on_file_select:
-            path = self.get_selected_file()
-            if path:
+        sel = self.file_tree.selection()
+        if not sel:
+            return
+        item_id = sel[0]
+        path = self._item_paths.get(item_id)
+        if not path:
+            return
+        if self._item_is_dir.get(item_id, False):
+            if self.on_dir_select:
+                self.on_dir_select(path)
+        else:
+            if self.on_file_select:
                 self.on_file_select(path)
 
     def _on_double_click(self, event):
-        path = self.get_selected_file()
-        if path and self.on_file_open:
-            self.on_file_open(path)
+        sel = self.file_tree.selection()
+        if not sel:
+            return
+        item_id = sel[0]
+        path = self._item_paths.get(item_id)
+        if not path:
+            return
+        if self._item_is_dir.get(item_id, False):
+            # Navigate into folder
+            self.load_directory(path)
+            if self.on_dir_open:
+                self.on_dir_open(path)
+        else:
+            if self.on_file_open:
+                self.on_file_open(path)
 
     def _sort_by(self, col: str):
         if col == self._sort_col:
@@ -246,19 +315,21 @@ class FileListPanel(ttk.Frame):
 
         items = [(self.file_tree.set(item, col), item) for item in self.file_tree.get_children()]
 
-        if col in ("size", "hardlinks", "inode"):
-            def sort_key(pair):
-                val = pair[0]
-                # Parse numeric values for proper sorting
+        # Always keep folders before files, then sort within each group
+        def sort_key(pair):
+            val, item_id = pair
+            is_dir = self._item_is_dir.get(item_id, False)
+            if col in ("size", "hardlinks", "inode"):
                 try:
-                    # For size, strip unit suffix
                     num_str = val.split()[0] if val else "0"
-                    return float(num_str)
+                    num = float(num_str)
                 except (ValueError, IndexError):
-                    return 0
-            items.sort(key=sort_key, reverse=self._sort_reverse)
-        else:
-            items.sort(key=lambda pair: pair[0].lower(), reverse=self._sort_reverse)
+                    num = -1 if is_dir else 0
+                return (0 if is_dir else 1, num)
+            else:
+                return (0 if is_dir else 1, val.lower())
+
+        items.sort(key=sort_key, reverse=self._sort_reverse)
 
         for index, (_val, item) in enumerate(items):
             self.file_tree.move(item, "", index)

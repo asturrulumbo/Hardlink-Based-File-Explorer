@@ -6,10 +6,10 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 from hardlink_manager.core.mirror_groups import MirrorGroupRegistry
-from hardlink_manager.core.sync import delete_from_group
+from hardlink_manager.core.sync import delete_from_group, sync_group
 from hardlink_manager.core.watcher import MirrorGroupWatcher
 from hardlink_manager.ui.file_browser import DirectoryTree, FileListPanel
-from hardlink_manager.ui.mirror_panel import MirrorGroupPanel
+from hardlink_manager.ui.mirror_panel import MirrorGroupPanel, MirrorGroupDialog
 from hardlink_manager.ui.search_panel import SearchPanel
 from hardlink_manager.ui.dialogs import (
     CreateHardlinkDialog,
@@ -103,8 +103,13 @@ class HardlinkManagerApp:
         browser_tab = ttk.Frame(self.notebook)
         self.notebook.add(browser_tab, text="File Browser")
 
-        self.file_list = FileListPanel(browser_tab, on_file_select=self._on_file_select,
-                                       on_file_open=self._open_file_action)
+        self.file_list = FileListPanel(
+            browser_tab,
+            on_file_select=self._on_file_select,
+            on_file_open=self._open_file_action,
+            on_dir_select=self._on_dir_select,
+            on_dir_open=self._on_dir_open,
+        )
         self.file_list.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
         # Tab 2: Mirror Groups
@@ -139,14 +144,24 @@ class HardlinkManagerApp:
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
     def _build_context_menu(self):
-        self.context_menu = tk.Menu(self.root, tearoff=0)
-        self.context_menu.add_command(label="Open", command=self._open_file_action)
-        self.context_menu.add_command(label="Rename...", command=self._rename_action)
-        self.context_menu.add_separator()
-        self.context_menu.add_command(label="Create Hardlink To...", command=self._create_hardlink_action)
-        self.context_menu.add_command(label="View Hardlinks", command=self._view_hardlinks_action)
-        self.context_menu.add_separator()
-        self.context_menu.add_command(label="Delete...", command=self._delete_hardlink_action)
+        # -- File context menu --
+        self.file_context_menu = tk.Menu(self.root, tearoff=0)
+        self.file_context_menu.add_command(label="Open", command=self._open_file_action)
+        self.file_context_menu.add_command(label="Rename...", command=self._rename_action)
+        self.file_context_menu.add_separator()
+        self.file_context_menu.add_command(label="Create Hardlink To...", command=self._create_hardlink_action)
+        self.file_context_menu.add_command(label="View Hardlinks", command=self._view_hardlinks_action)
+        self.file_context_menu.add_separator()
+        self.file_context_menu.add_command(label="Delete...", command=self._delete_hardlink_action)
+
+        # -- Folder context menu --
+        self.folder_context_menu = tk.Menu(self.root, tearoff=0)
+        self.folder_context_menu.add_command(label="Open Folder", command=self._open_selected_folder)
+        self.folder_context_menu.add_separator()
+        self.folder_context_menu.add_command(label="Create Mirror Group...", command=self._create_mirror_from_folder)
+        self.folder_context_menu.add_command(label="Add to Mirror Group...", command=self._add_folder_to_mirror)
+        self.folder_context_menu.add_separator()
+        self.folder_context_menu.add_command(label="Rename...", command=self._rename_action)
 
         # Bind right-click on the file list
         self.file_list.file_tree.bind("<Button-3>", self._show_context_menu)
@@ -157,7 +172,10 @@ class HardlinkManagerApp:
         item = self.file_list.file_tree.identify_row(event.y)
         if item:
             self.file_list.file_tree.selection_set(item)
-            self.context_menu.tk_popup(event.x_root, event.y_root)
+            if self.file_list.is_selected_dir():
+                self.folder_context_menu.tk_popup(event.x_root, event.y_root)
+            else:
+                self.file_context_menu.tk_popup(event.x_root, event.y_root)
 
     # -- Watcher callbacks --
 
@@ -184,6 +202,94 @@ class HardlinkManagerApp:
         """Clean shutdown."""
         self.watcher.stop()
         self.root.destroy()
+
+    # -- Folder navigation callbacks --
+
+    def _on_dir_select(self, path: str):
+        """Called when a directory is selected in the file list."""
+        self._set_status(f"Folder: {os.path.basename(path)}")
+
+    def _on_dir_open(self, path: str):
+        """Called when a directory is opened (double-click or Up button)."""
+        self._set_status(f"Viewing: {path}")
+
+    def _open_selected_folder(self):
+        """Navigate into the selected folder in the file list."""
+        path = self.file_list.get_selected_path()
+        if path and os.path.isdir(path):
+            self.file_list.load_directory(path)
+            self._set_status(f"Viewing: {path}")
+
+    def _create_mirror_from_folder(self):
+        """Create a new mirror group starting with the selected folder."""
+        path = self.file_list.get_selected_path()
+        if not path or not os.path.isdir(path):
+            return
+        path = os.path.abspath(path)
+        dlg = MirrorGroupDialog(
+            self.root,
+            title="Create Mirror Group",
+            initial_folders=[path],
+        )
+        self.root.wait_window(dlg)
+        if dlg.result:
+            group = self.registry.create_group(
+                name=dlg.result["name"],
+                folders=dlg.result["folders"],
+                sync_enabled=dlg.result["sync_enabled"],
+            )
+            if dlg.result["sync_enabled"]:
+                try:
+                    created = sync_group(group)
+                    if created:
+                        self._set_status(
+                            f"Mirror group '{group.name}' created. "
+                            f"{len(created)} file(s) synced."
+                        )
+                    else:
+                        self._set_status(f"Mirror group '{group.name}' created.")
+                except Exception:
+                    self._set_status(f"Mirror group '{group.name}' created.")
+            else:
+                self._set_status(f"Mirror group '{group.name}' created.")
+            self.mirror_panel.refresh_list()
+            self._on_mirror_groups_changed()
+
+    def _add_folder_to_mirror(self):
+        """Add the selected folder to an existing mirror group."""
+        path = self.file_list.get_selected_path()
+        if not path or not os.path.isdir(path):
+            return
+        path = os.path.abspath(path)
+
+        # Check if already in a group
+        existing = self.registry.find_group_for_folder(path)
+        if existing:
+            messagebox.showinfo(
+                "Already in Group",
+                f"This folder is already in mirror group '{existing.name}'.",
+                parent=self.root,
+            )
+            return
+
+        groups = self.registry.get_all_groups()
+        if not groups:
+            messagebox.showinfo(
+                "No Mirror Groups",
+                "There are no mirror groups yet. Use 'Create Mirror Group' first.",
+                parent=self.root,
+            )
+            return
+
+        # Show picker dialog
+        dlg = _GroupPickerDialog(self.root, groups)
+        self.root.wait_window(dlg)
+        if dlg.selected_group_id:
+            self.registry.add_folder_to_group(dlg.selected_group_id, path)
+            group = self.registry.get_group(dlg.selected_group_id)
+            self._set_status(f"Added folder to mirror group '{group.name}'.")
+            self.mirror_panel.refresh_list()
+            self._on_mirror_groups_changed()
 
     # -- Menu / action handlers --
 
@@ -234,9 +340,9 @@ class HardlinkManagerApp:
             messagebox.showerror("Error Opening File", str(e), parent=self.root)
 
     def _rename_action(self):
-        selected = self.file_list.get_selected_file()
+        selected = self.file_list.get_selected_path()
         if not selected:
-            messagebox.showinfo("No File Selected", "Please select a file first.", parent=self.root)
+            messagebox.showinfo("No Selection", "Please select a file or folder first.", parent=self.root)
             return
         dlg = RenameDialog(self.root, selected)
         self.root.wait_window(dlg)
@@ -323,3 +429,55 @@ class HardlinkManagerApp:
 
     def run(self):
         self.root.mainloop()
+
+
+class _GroupPickerDialog(tk.Toplevel):
+    """Simple dialog for picking an existing mirror group."""
+
+    def __init__(self, parent, groups: list):
+        super().__init__(parent)
+        self.title("Select Mirror Group")
+        self.selected_group_id = None
+        self.transient(parent)
+        self.grab_set()
+        self.minsize(350, 250)
+
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="Add folder to which mirror group?").pack(anchor=tk.W, pady=(0, 5))
+
+        list_frame = ttk.Frame(frame)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        self._listbox = tk.Listbox(list_frame, height=8)
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self._listbox.yview)
+        self._listbox.configure(yscrollcommand=scrollbar.set)
+        self._listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self._group_ids = []
+        for g in groups:
+            self._listbox.insert(tk.END, f"{g.name}  ({len(g.folders)} folders)")
+            self._group_ids.append(g.id)
+
+        self._listbox.bind("<Double-1>", lambda e: self._on_ok())
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack()
+        ttk.Button(btn_frame, text="OK", width=10, command=self._on_ok).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", width=10, command=self.destroy).pack(side=tk.LEFT, padx=5)
+
+        # Center on parent
+        self.update_idletasks()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        w, h = self.winfo_width(), self.winfo_height()
+        self.geometry(f"+{px + (pw - w) // 2}+{py + (ph - h) // 2}")
+
+    def _on_ok(self):
+        sel = self._listbox.curselection()
+        if not sel:
+            return
+        self.selected_group_id = self._group_ids[sel[0]]
+        self.destroy()
