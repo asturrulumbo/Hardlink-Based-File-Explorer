@@ -9,7 +9,7 @@ from hardlink_manager.core.mirror_groups import MirrorGroupRegistry
 from hardlink_manager.core.sync import delete_from_group, sync_group
 from hardlink_manager.core.watcher import MirrorGroupWatcher
 from hardlink_manager.ui.file_browser import DirectoryTree, FileListPanel
-from hardlink_manager.ui.mirror_panel import MirrorGroupPanel, MirrorGroupDialog
+from hardlink_manager.ui.mirror_panel import MirrorGroupPanel
 from hardlink_manager.ui.search_panel import SearchPanel
 from hardlink_manager.ui.dialogs import (
     CreateHardlinkDialog,
@@ -158,8 +158,8 @@ class HardlinkManagerApp:
         self.folder_context_menu = tk.Menu(self.root, tearoff=0)
         self.folder_context_menu.add_command(label="Open Folder", command=self._open_selected_folder)
         self.folder_context_menu.add_separator()
-        self.folder_context_menu.add_command(label="Create Mirror Group...", command=self._create_mirror_from_folder)
-        self.folder_context_menu.add_command(label="Add to Mirror Group...", command=self._add_folder_to_mirror)
+        self.folder_context_menu.add_command(label="Create Hardlink Mirror...", command=self._create_mirror_from_folder)
+        self.folder_context_menu.add_command(label="Add to Existing Mirror...", command=self._add_folder_to_mirror)
         self.folder_context_menu.add_separator()
         self.folder_context_menu.add_command(label="Rename...", command=self._rename_action)
 
@@ -221,39 +221,56 @@ class HardlinkManagerApp:
             self._set_status(f"Viewing: {path}")
 
     def _create_mirror_from_folder(self):
-        """Create a new mirror group starting with the selected folder."""
-        path = self.file_list.get_selected_path()
-        if not path or not os.path.isdir(path):
+        """Create a hardlink mirror of the selected folder at a chosen location."""
+        source = self.file_list.get_selected_path()
+        if not source or not os.path.isdir(source):
             return
-        path = os.path.abspath(path)
-        dlg = MirrorGroupDialog(
-            self.root,
-            title="Create Mirror Group",
-            initial_folders=[path],
+        source = os.path.abspath(source)
+
+        # Ask where to place the mirror folder
+        dest_parent = filedialog.askdirectory(
+            parent=self.root,
+            title="Choose where to place the mirror folder",
         )
-        self.root.wait_window(dlg)
-        if dlg.result:
-            group = self.registry.create_group(
-                name=dlg.result["name"],
-                folders=dlg.result["folders"],
-                sync_enabled=dlg.result["sync_enabled"],
+        if not dest_parent:
+            return
+
+        # Create mirror folder with same name as source
+        source_name = os.path.basename(source)
+        dest = os.path.join(dest_parent, source_name)
+
+        if os.path.exists(dest):
+            messagebox.showerror(
+                "Folder Exists",
+                f"A folder named '{source_name}' already exists at that location.",
+                parent=self.root,
             )
-            if dlg.result["sync_enabled"]:
-                try:
-                    created = sync_group(group)
-                    if created:
-                        self._set_status(
-                            f"Mirror group '{group.name}' created. "
-                            f"{len(created)} file(s) synced."
-                        )
-                    else:
-                        self._set_status(f"Mirror group '{group.name}' created.")
-                except Exception:
-                    self._set_status(f"Mirror group '{group.name}' created.")
-            else:
-                self._set_status(f"Mirror group '{group.name}' created.")
-            self.mirror_panel.refresh_list()
-            self._on_mirror_groups_changed()
+            return
+
+        try:
+            os.makedirs(dest)
+        except OSError as e:
+            messagebox.showerror("Error", f"Could not create folder:\n{e}", parent=self.root)
+            return
+
+        # Register as mirror group (name auto-generated from folder names)
+        group = self.registry.create_group(folders=[source, dest])
+
+        # Sync all files from source to the new mirror
+        try:
+            created = sync_group(group)
+            n = len(created)
+            self._set_status(
+                f"Mirror created: {dest}  ({n} file(s) hardlinked)"
+            )
+        except Exception as e:
+            self._set_status(f"Mirror created at {dest} (sync error: {e})")
+
+        self.mirror_panel.refresh_list()
+        self._on_mirror_groups_changed()
+        # Refresh file list to show the new mirror folder if we're viewing dest_parent
+        if self.file_list.current_dir and os.path.normpath(self.file_list.current_dir) == os.path.normpath(dest_parent):
+            self.file_list.load_directory(self.file_list.current_dir)
 
     def _add_folder_to_mirror(self):
         """Add the selected folder to an existing mirror group."""
@@ -266,8 +283,8 @@ class HardlinkManagerApp:
         existing = self.registry.find_group_for_folder(path)
         if existing:
             messagebox.showinfo(
-                "Already in Group",
-                f"This folder is already in mirror group '{existing.name}'.",
+                "Already Mirrored",
+                f"This folder is already in a mirror group:\n{existing.auto_name()}",
                 parent=self.root,
             )
             return
@@ -276,7 +293,7 @@ class HardlinkManagerApp:
         if not groups:
             messagebox.showinfo(
                 "No Mirror Groups",
-                "There are no mirror groups yet. Use 'Create Mirror Group' first.",
+                "There are no mirror groups yet. Use 'Create Hardlink Mirror' first.",
                 parent=self.root,
             )
             return
@@ -287,7 +304,7 @@ class HardlinkManagerApp:
         if dlg.selected_group_id:
             self.registry.add_folder_to_group(dlg.selected_group_id, path)
             group = self.registry.get_group(dlg.selected_group_id)
-            self._set_status(f"Added folder to mirror group '{group.name}'.")
+            self._set_status(f"Added folder to mirror: {group.name}")
             self.mirror_panel.refresh_list()
             self._on_mirror_groups_changed()
 
@@ -390,14 +407,14 @@ class HardlinkManagerApp:
         if group is not None:
             # Mirror group deletion: ask to remove from all group folders
             folder_list = "\n".join(f"  - {f}" for f in group.folders)
-            msg = (f"This file exists in mirror group '{group.name}':\n\n"
+            msg = (f"This file is mirrored across:\n\n"
                    f"{folder_list}\n\n"
                    f"Remove from all folders?")
             if messagebox.askyesno("Delete from Mirror Group", msg, parent=self.root):
                 try:
                     deleted = delete_from_group(selected, group)
                     self._set_status(
-                        f"Deleted from {len(deleted)} folder(s) in '{group.name}'."
+                        f"Deleted from {len(deleted)} folder(s)."
                     )
                 except Exception as e:
                     messagebox.showerror("Error", str(e), parent=self.root)
@@ -458,7 +475,7 @@ class _GroupPickerDialog(tk.Toplevel):
 
         self._group_ids = []
         for g in groups:
-            self._listbox.insert(tk.END, f"{g.name}  ({len(g.folders)} folders)")
+            self._listbox.insert(tk.END, g.auto_name())
             self._group_ids.append(g.id)
 
         self._listbox.bind("<Double-1>", lambda e: self._on_ok())

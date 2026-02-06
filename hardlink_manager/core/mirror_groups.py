@@ -22,6 +22,13 @@ class MirrorGroup:
         """Update the modified_at timestamp."""
         self.modified_at = datetime.now(timezone.utc).isoformat()
 
+    def auto_name(self) -> str:
+        """Generate a display name from folder basenames (e.g. 'Photos + Backup')."""
+        if not self.folders:
+            return "(empty)"
+        names = [os.path.basename(f) or f for f in self.folders]
+        return " + ".join(names)
+
 
 DEFAULT_REGISTRY_FILENAME = "mirror_groups.json"
 
@@ -72,10 +79,13 @@ class MirrorGroupRegistry:
 
     # -- CRUD --
 
-    def create_group(self, name: str, folders: list[str],
-                     sync_enabled: bool = True) -> MirrorGroup:
-        """Create a new mirror group and save."""
+    def create_group(self, folders: list[str],
+                     sync_enabled: bool = True,
+                     name: str = "") -> MirrorGroup:
+        """Create a new mirror group and save. Name is auto-generated from folders if empty."""
         group = MirrorGroup(name=name, folders=folders, sync_enabled=sync_enabled)
+        if not group.name:
+            group.name = group.auto_name()
         self._groups[group.id] = group
         self.save()
         return group
@@ -89,7 +99,7 @@ class MirrorGroupRegistry:
     def update_group(self, group_id: str, name: Optional[str] = None,
                      folders: Optional[list[str]] = None,
                      sync_enabled: Optional[bool] = None) -> Optional[MirrorGroup]:
-        """Update an existing mirror group and save."""
+        """Update an existing mirror group and save. Name is auto-updated when folders change."""
         group = self._groups.get(group_id)
         if group is None:
             return None
@@ -97,6 +107,8 @@ class MirrorGroupRegistry:
             group.name = name
         if folders is not None:
             group.folders = folders
+            # Auto-update name from folder names
+            group.name = group.auto_name()
         if sync_enabled is not None:
             group.sync_enabled = sync_enabled
         group.touch()
@@ -119,6 +131,7 @@ class MirrorGroupRegistry:
         folder = os.path.abspath(folder)
         if folder not in group.folders:
             group.folders.append(folder)
+            group.name = group.auto_name()
             group.touch()
             self.save()
         return True
@@ -131,6 +144,7 @@ class MirrorGroupRegistry:
         folder = os.path.abspath(folder)
         if folder in group.folders:
             group.folders.remove(folder)
+            group.name = group.auto_name()
             group.touch()
             self.save()
             return True

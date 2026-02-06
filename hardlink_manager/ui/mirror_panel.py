@@ -76,7 +76,7 @@ class MirrorGroupPanel(ttk.Frame):
         for group in self.registry.get_all_groups():
             sync_text = "On" if group.sync_enabled else "Off"
             item_id = self.group_tree.insert("", tk.END, values=(
-                group.name, len(group.folders), sync_text
+                group.auto_name(), len(group.folders), sync_text
             ))
             self._group_ids[item_id] = group.id
 
@@ -109,7 +109,6 @@ class MirrorGroupPanel(ttk.Frame):
         self.winfo_toplevel().wait_window(dlg)
         if dlg.result:
             self.registry.create_group(
-                name=dlg.result["name"],
                 folders=dlg.result["folders"],
                 sync_enabled=dlg.result["sync_enabled"],
             )
@@ -130,7 +129,6 @@ class MirrorGroupPanel(ttk.Frame):
         if dlg.result:
             self.registry.update_group(
                 group_id,
-                name=dlg.result["name"],
                 folders=dlg.result["folders"],
                 sync_enabled=dlg.result["sync_enabled"],
             )
@@ -146,7 +144,7 @@ class MirrorGroupPanel(ttk.Frame):
         if group is None:
             return
         if not messagebox.askyesno("Delete Mirror Group",
-                                   f"Delete mirror group '{group.name}'?\n\n"
+                                   f"Delete mirror group '{group.auto_name()}'?\n\n"
                                    "This only removes the group definition. "
                                    "Existing files and hardlinks are not affected.",
                                    parent=self.winfo_toplevel()):
@@ -167,9 +165,9 @@ class MirrorGroupPanel(ttk.Frame):
         try:
             created = sync_group(group)
             if created:
-                msg = f"Synced '{group.name}': {len(created)} hardlink(s) created."
+                msg = f"Synced '{group.auto_name()}': {len(created)} hardlink(s) created."
             else:
-                msg = f"'{group.name}' is already in sync."
+                msg = f"'{group.auto_name()}' is already in sync."
             self._set_status(msg)
             messagebox.showinfo("Sync Complete", msg, parent=self.winfo_toplevel())
         except Exception as e:
@@ -221,13 +219,8 @@ class MirrorGroupDialog(tk.Toplevel):
         frame = ttk.Frame(self, padding=10)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        # Name
-        ttk.Label(frame, text="Group name:").pack(anchor=tk.W, pady=(0, 2))
-        self.name_var = tk.StringVar(value=self._group.name if self._group else "")
-        ttk.Entry(frame, textvariable=self.name_var, width=50).pack(fill=tk.X, pady=(0, 10))
-
         # Folders
-        ttk.Label(frame, text="Folders in this group:").pack(anchor=tk.W, pady=(0, 2))
+        ttk.Label(frame, text="Folders in this mirror group:").pack(anchor=tk.W, pady=(0, 2))
 
         folder_frame = ttk.Frame(frame)
         folder_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
@@ -272,16 +265,11 @@ class MirrorGroupDialog(tk.Toplevel):
             self.folder_listbox.delete(idx)
 
     def _on_ok(self):
-        name = self.name_var.get().strip()
-        if not name:
-            messagebox.showwarning("Missing Name", "Please enter a group name.", parent=self)
-            return
         if len(self._folders) < 2:
             messagebox.showwarning("Not Enough Folders",
                                    "A mirror group needs at least 2 folders.", parent=self)
             return
         self.result = {
-            "name": name,
             "folders": list(self._folders),
             "sync_enabled": self.sync_var.get(),
         }

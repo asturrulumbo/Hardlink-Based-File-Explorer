@@ -45,18 +45,32 @@ class TestMirrorGroup:
         g.touch()
         assert g.modified_at >= old
 
+    def test_auto_name_from_folders(self):
+        g = MirrorGroup(folders=["/home/user/Photos", "/mnt/backup/Photos"])
+        assert g.auto_name() == "Photos + Photos"
+
+    def test_auto_name_empty(self):
+        g = MirrorGroup()
+        assert g.auto_name() == "(empty)"
+
+    def test_auto_name_single_folder(self):
+        g = MirrorGroup(folders=["/data/docs"])
+        assert g.auto_name() == "docs"
+
 
 class TestRegistryPersistence:
     def test_save_and_load(self, registry, two_folders, registry_path):
-        registry.create_group("Test Group", two_folders)
+        registry.create_group(two_folders)
         assert os.path.exists(registry_path)
 
         # Load in a new registry instance
         reg2 = MirrorGroupRegistry(path=registry_path)
         groups = reg2.get_all_groups()
         assert len(groups) == 1
-        assert groups[0].name == "Test Group"
         assert groups[0].folders == two_folders
+        # Name should be auto-generated from folder basenames
+        assert "folder_a" in groups[0].name
+        assert "folder_b" in groups[0].name
 
     def test_load_nonexistent_file(self, tmp_path):
         path = str(tmp_path / "does_not_exist.json")
@@ -71,43 +85,53 @@ class TestRegistryPersistence:
         assert reg.get_all_groups() == []
 
     def test_json_structure(self, registry, two_folders, registry_path):
-        registry.create_group("G1", two_folders, sync_enabled=False)
+        registry.create_group(two_folders, sync_enabled=False)
         with open(registry_path) as f:
             data = json.load(f)
         assert "groups" in data
         assert len(data["groups"]) == 1
         g = data["groups"][0]
-        assert g["name"] == "G1"
         assert g["sync_enabled"] is False
 
 
 class TestRegistryCRUD:
-    def test_create_group(self, registry, two_folders):
-        group = registry.create_group("My Group", two_folders)
-        assert group.name == "My Group"
+    def test_create_group_auto_name(self, registry, two_folders):
+        group = registry.create_group(two_folders)
+        assert "folder_a" in group.name
+        assert "folder_b" in group.name
         assert group.folders == two_folders
         assert group.sync_enabled is True
         assert registry.get_group(group.id) is group
 
+    def test_create_group_explicit_name(self, registry, two_folders):
+        group = registry.create_group(two_folders, name="Custom Name")
+        assert group.name == "Custom Name"
+
     def test_get_all_groups(self, registry, two_folders):
-        registry.create_group("A", two_folders)
-        registry.create_group("B", two_folders)
+        registry.create_group(two_folders)
+        registry.create_group(two_folders)
         assert len(registry.get_all_groups()) == 2
 
     def test_get_group_nonexistent(self, registry):
         assert registry.get_group("fake-id") is None
 
-    def test_update_group(self, registry, two_folders):
-        group = registry.create_group("Old Name", two_folders)
-        updated = registry.update_group(group.id, name="New Name", sync_enabled=False)
-        assert updated.name == "New Name"
+    def test_update_group_folders_updates_name(self, registry, two_folders, tmp_path):
+        group = registry.create_group(two_folders)
+        new_folder = str(tmp_path / "new_folder")
+        os.makedirs(new_folder)
+        updated = registry.update_group(group.id, folders=[two_folders[0], new_folder])
+        assert "new_folder" in updated.name
+
+    def test_update_group_sync(self, registry, two_folders):
+        group = registry.create_group(two_folders)
+        updated = registry.update_group(group.id, sync_enabled=False)
         assert updated.sync_enabled is False
 
     def test_update_nonexistent(self, registry):
         assert registry.update_group("fake-id", name="X") is None
 
     def test_delete_group(self, registry, two_folders):
-        group = registry.create_group("To Delete", two_folders)
+        group = registry.create_group(two_folders)
         assert registry.delete_group(group.id) is True
         assert registry.get_group(group.id) is None
         assert len(registry.get_all_groups()) == 0
@@ -115,21 +139,23 @@ class TestRegistryCRUD:
     def test_delete_nonexistent(self, registry):
         assert registry.delete_group("fake-id") is False
 
-    def test_add_folder_to_group(self, registry, two_folders, tmp_path):
-        group = registry.create_group("G", two_folders)
+    def test_add_folder_to_group_updates_name(self, registry, two_folders, tmp_path):
+        group = registry.create_group(two_folders)
         new_folder = str(tmp_path / "folder_c")
         os.makedirs(new_folder)
         assert registry.add_folder_to_group(group.id, new_folder) is True
         assert os.path.abspath(new_folder) in group.folders
+        assert "folder_c" in group.name
 
     def test_add_folder_nonexistent_group(self, registry):
         assert registry.add_folder_to_group("fake-id", "/tmp") is False
 
-    def test_remove_folder_from_group(self, registry, two_folders):
-        group = registry.create_group("G", two_folders)
+    def test_remove_folder_from_group_updates_name(self, registry, two_folders):
+        group = registry.create_group(two_folders)
         folder_to_remove = os.path.abspath(two_folders[0])
         assert registry.remove_folder_from_group(group.id, folder_to_remove) is True
         assert folder_to_remove not in group.folders
+        assert "folder_a" not in group.name
 
     def test_remove_folder_nonexistent_group(self, registry):
         assert registry.remove_folder_from_group("fake-id", "/tmp") is False
@@ -137,16 +163,16 @@ class TestRegistryCRUD:
 
 class TestRegistryQueries:
     def test_find_group_for_folder(self, registry, two_folders):
-        group = registry.create_group("G", two_folders)
+        group = registry.create_group(two_folders)
         found = registry.find_group_for_folder(two_folders[0])
         assert found is not None
         assert found.id == group.id
 
     def test_find_group_for_unknown_folder(self, registry, two_folders):
-        registry.create_group("G", two_folders)
+        registry.create_group(two_folders)
         assert registry.find_group_for_folder("/some/random/path") is None
 
     def test_is_folder_in_group(self, registry, two_folders):
-        registry.create_group("G", two_folders)
+        registry.create_group(two_folders)
         assert registry.is_folder_in_group(two_folders[0]) is True
         assert registry.is_folder_in_group("/unknown") is False

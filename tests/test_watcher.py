@@ -21,7 +21,6 @@ def mirror_workspace(tmp_path):
     registry_path = str(tmp_path / "mirror_groups.json")
     registry = MirrorGroupRegistry(path=registry_path)
     group = registry.create_group(
-        "Watch Test",
         [str(folder_a), str(folder_b)],
         sync_enabled=True,
     )
