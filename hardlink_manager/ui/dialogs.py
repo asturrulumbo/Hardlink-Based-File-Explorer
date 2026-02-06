@@ -169,14 +169,14 @@ class DeleteHardlinkDialog(tk.Toplevel):
 
     def __init__(self, parent, file_path: str, search_dirs: list[str]):
         super().__init__(parent)
-        self.title("Delete Hardlink")
+        self.title("Delete File")
         self.file_path = file_path
         self.search_dirs = search_dirs
         self.deleted = False
         self.transient(parent)
         self.grab_set()
 
-        self.minsize(500, 300)
+        self.minsize(500, 250)
         self._build_ui()
         self._center_on_parent(parent)
 
@@ -200,45 +200,50 @@ class DeleteHardlinkDialog(tk.Toplevel):
             nlinks = 1
             links = [self.file_path]
 
-        ttk.Label(frame, text=f"Delete: {os.path.basename(self.file_path)}", font=("TkDefaultFont", 10, "bold")).pack(
-            anchor=tk.W, pady=(0, 5)
-        )
+        ttk.Label(frame, text=f"Delete: {os.path.basename(self.file_path)}",
+                  font=("TkDefaultFont", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
         ttk.Label(frame, text=f"Path: {self.file_path}", wraplength=450).pack(anchor=tk.W)
 
         if nlinks > 1:
+            # File exists in multiple locations — show them all
+            other_links = [lnk for lnk in links
+                           if os.path.normpath(lnk) != os.path.normpath(self.file_path)]
+            folder_names = [os.path.dirname(lnk) for lnk in other_links]
+
             ttk.Label(
                 frame,
-                text=f"\nThis file has {nlinks} hardlink(s). The data will be preserved\n"
-                     f"through the remaining link(s).",
-                foreground="blue",
-            ).pack(anchor=tk.W, pady=5)
+                text=f"\nThis file also exists in:",
+            ).pack(anchor=tk.W, pady=(5, 0))
 
-            ttk.Label(frame, text="Other locations with this file:").pack(anchor=tk.W)
             list_frame = ttk.Frame(frame)
             list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
             scrollbar = ttk.Scrollbar(list_frame)
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-            listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, height=6)
+            listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, height=5)
             listbox.pack(fill=tk.BOTH, expand=True)
             scrollbar.config(command=listbox.yview)
-            for link in links:
-                if os.path.normpath(link) != os.path.normpath(self.file_path):
-                    listbox.insert(tk.END, link)
+            for lnk in other_links:
+                listbox.insert(tk.END, lnk)
+
+            ttk.Label(
+                frame,
+                text="Remove from this location only? (File data is preserved through other links.)",
+            ).pack(anchor=tk.W, pady=(5, 0))
         else:
             ttk.Label(
                 frame,
-                text="\nWARNING: This is the LAST hardlink to this file.\n"
-                     "Deleting it will permanently remove the file data!",
+                text="\nThis is the only copy of this file.\n"
+                     "Deleting it will permanently remove the file data.",
                 foreground="red",
                 font=("TkDefaultFont", 9, "bold"),
             ).pack(anchor=tk.W, pady=10)
 
         btn_frame = ttk.Frame(frame)
         btn_frame.pack(pady=(10, 0))
-        ttk.Button(btn_frame, text="Delete", command=self._on_delete).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Yes", width=8, command=self._on_yes).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="No", width=8, command=self.destroy).pack(side=tk.LEFT, padx=5)
 
-    def _on_delete(self):
+    def _on_yes(self):
         try:
             delete_hardlink(self.file_path)
             self.deleted = True
