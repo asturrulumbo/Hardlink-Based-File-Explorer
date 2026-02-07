@@ -199,7 +199,10 @@ class MirrorGroupRegistry:
         """Check if a folder belongs to any mirror group."""
         return self.find_group_for_folder(folder) is not None
 
-    def scan_content_mirrors(self, root_folders: list[str]) -> list["MirrorGroup"]:
+    def scan_content_mirrors(self, root_folders: list[str],
+                             progress_callback: Optional[
+                                 "Callable[[int, int], None]"] = None,
+                             ) -> list["MirrorGroup"]:
         """Scan folders for content-based mirrors.
 
         Recursively walks each root folder and all its subfolders.
@@ -210,6 +213,11 @@ class MirrorGroupRegistry:
         Two folders are considered mirrors if they have identical
         fingerprints -- same file contents in the same tree structure,
         regardless of the names used for files and folders.
+
+        Args:
+            root_folders: Directories to scan.
+            progress_callback: Optional ``fn(dirs_done, files_hashed)``
+                called periodically so the UI can show progress.
 
         Returns:
             List of newly created MirrorGroup objects.
@@ -222,6 +230,11 @@ class MirrorGroupRegistry:
             return []
 
         fp_cache: dict[str, str | None] = {}
+        _stats = {"dirs": 0, "files": 0}
+
+        def _report():
+            if progress_callback is not None:
+                progress_callback(_stats["dirs"], _stats["files"])
 
         def _hash_file(filepath: str) -> str:
             """Return SHA-256 hex digest of a file's contents."""
@@ -229,6 +242,9 @@ class MirrorGroupRegistry:
             with open(filepath, 'rb') as f:
                 for chunk in iter(lambda: f.read(65536), b''):
                     h.update(chunk)
+            _stats["files"] += 1
+            if _stats["files"] % 50 == 0:
+                _report()
             return h.hexdigest()
 
         def _dir_fingerprint(dirpath: str) -> str | None:
@@ -273,11 +289,15 @@ class MirrorGroupRegistry:
                 (';'.join(file_fps) + '|' + ';'.join(child_fps)).encode()
             ).hexdigest()
             fp_cache[dirpath] = combined
+            _stats["dirs"] += 1
+            if _stats["dirs"] % 20 == 0:
+                _report()
             return combined
 
         # Compute fingerprints starting from each root
         for root in root_folders:
             _dir_fingerprint(root)
+        _report()  # final progress update
 
         # Group directories by fingerprint
         fp_groups: dict[str, list[str]] = {}

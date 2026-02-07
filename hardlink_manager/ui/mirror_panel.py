@@ -1,6 +1,7 @@
 """Mirror group management panel and dialogs."""
 
 import os
+import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from typing import Callable, Optional
@@ -35,8 +36,11 @@ class MirrorGroupPanel(ttk.Frame):
         ttk.Button(toolbar, text="Edit", command=self._edit_group).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Delete", command=self._delete_group).pack(side=tk.LEFT, padx=2)
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
-        ttk.Button(toolbar, text="Scan for Mirrors", command=self._scan_for_mirrors).pack(side=tk.LEFT, padx=2)
+        self._scan_btn = ttk.Button(toolbar, text="Scan for Mirrors", command=self._scan_for_mirrors)
+        self._scan_btn.pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Sync Now", command=self._sync_group).pack(side=tk.LEFT, padx=2)
+
+        self._scan_thread: threading.Thread | None = None
 
         # -- Group list --
         list_frame = ttk.LabelFrame(self, text="Mirror Groups", padding=5)
@@ -188,8 +192,13 @@ class MirrorGroupPanel(ttk.Frame):
         except Exception as e:
             messagebox.showerror("Sync Error", str(e), parent=self.winfo_toplevel())
 
+    # -- Background mirror scan --
+
     def _scan_for_mirrors(self):
         """Scan all folders opened in the File Browser for content-based mirrors."""
+        if self._scan_thread is not None and self._scan_thread.is_alive():
+            return  # already running
+
         if not self.get_scan_folders:
             messagebox.showinfo(
                 "Not Available",
@@ -208,15 +217,55 @@ class MirrorGroupPanel(ttk.Frame):
             )
             return
 
-        self._set_status("Scanning for content mirrors (this may take a while)...")
-        self.winfo_toplevel().update_idletasks()
+        # Disable button while scanning
+        self._scan_btn.configure(state=tk.DISABLED)
+        self._set_status("Scanning for content mirrors...")
 
-        try:
-            new_groups = self.registry.scan_content_mirrors(root_folders)
-        except Exception as e:
-            messagebox.showerror("Scan Error", str(e), parent=self.winfo_toplevel())
+        # Shared state between the worker thread and the UI
+        self._scan_result: list[MirrorGroup] | None = None
+        self._scan_error: str | None = None
+        self._scan_progress = ""
+
+        def _worker():
+            def _on_progress(dirs_done: int, files_hashed: int):
+                self._scan_progress = (
+                    f"Scanning... {dirs_done} folder(s), "
+                    f"{files_hashed} file(s) hashed"
+                )
+
+            try:
+                self._scan_result = self.registry.scan_content_mirrors(
+                    root_folders, progress_callback=_on_progress,
+                )
+            except Exception as e:
+                self._scan_error = str(e)
+
+        self._scan_thread = threading.Thread(target=_worker, daemon=True)
+        self._scan_thread.start()
+        self._poll_scan()
+
+    def _poll_scan(self):
+        """Check whether the background scan thread has finished."""
+        if self._scan_thread is not None and self._scan_thread.is_alive():
+            # Still running – update status bar and check again soon
+            if self._scan_progress:
+                self._set_status(self._scan_progress)
+            self.after(200, self._poll_scan)
             return
 
+        # Thread finished – re-enable button and show results
+        self._scan_btn.configure(state=tk.NORMAL)
+        self._scan_thread = None
+
+        if self._scan_error is not None:
+            self._set_status("Scan failed.")
+            messagebox.showerror(
+                "Scan Error", self._scan_error,
+                parent=self.winfo_toplevel(),
+            )
+            return
+
+        new_groups = self._scan_result or []
         if new_groups:
             self.refresh_list()
             self._notify_change(
