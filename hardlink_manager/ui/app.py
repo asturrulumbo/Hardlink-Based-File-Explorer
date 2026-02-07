@@ -27,6 +27,7 @@ from hardlink_manager.utils.filesystem import (
     move_item,
     open_file,
     reveal_in_explorer,
+    sanitize_filename,
 )
 
 
@@ -278,6 +279,10 @@ class HardlinkManagerApp:
             parent=self.root,
         )
         if not mirror_name:
+            return
+        mirror_name = sanitize_filename(mirror_name)
+        if not mirror_name:
+            messagebox.showerror("Invalid Name", "The folder name is empty after removing invalid characters.", parent=self.root)
             return
 
         # Ask where to place the mirror folder

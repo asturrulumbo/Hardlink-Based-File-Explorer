@@ -3,6 +3,7 @@
 import os
 import platform
 import stat
+import unicodedata
 
 
 def get_inode(path: str) -> int:
@@ -57,6 +58,27 @@ def is_same_volume(path1: str, path2: str) -> bool:
                         if not os.path.exists(path2)
                         else os.path.abspath(path2))
         return stat1.st_dev == stat2.st_dev
+
+
+def sanitize_filename(name: str) -> str:
+    """Remove characters that are invalid in Windows/NTFS filenames.
+
+    Strips invisible Unicode control and formatting characters (e.g. RTL marks,
+    zero-width joiners) that tkinter input widgets may inject, as well as the
+    standard Windows-forbidden characters.
+    """
+    # Strip Unicode control (Cc) and formatting (Cf) characters —
+    # includes bidi marks (U+200E/F, U+202A-E), BOM (U+FEFF), ZWJ/ZWNJ, etc.
+    cleaned = "".join(
+        ch for ch in name
+        if unicodedata.category(ch) not in ("Cc", "Cf")
+    )
+    # Remove characters forbidden in Windows filenames
+    forbidden = '<>:"/\\|?*'
+    cleaned = "".join(ch for ch in cleaned if ch not in forbidden)
+    # Windows doesn't allow trailing dots or spaces in names
+    cleaned = cleaned.strip().rstrip(".")
+    return cleaned
 
 
 def is_regular_file(path: str) -> bool:

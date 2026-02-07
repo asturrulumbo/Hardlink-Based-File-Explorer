@@ -9,6 +9,7 @@ from hardlink_manager.utils.filesystem import (
     format_file_size,
     get_hardlink_count,
     get_inode,
+    sanitize_filename,
 )
 
 
@@ -77,12 +78,12 @@ class CreateHardlinkDialog(tk.Toplevel):
 
     def _on_create(self):
         dest_dir = self.dest_var.get().strip()
-        dest_name = self.name_var.get().strip()
+        dest_name = sanitize_filename(self.name_var.get().strip())
         if not dest_dir:
             messagebox.showwarning("Missing Destination", "Please select a destination folder.", parent=self)
             return
         if not dest_name:
-            messagebox.showwarning("Missing Name", "Please enter a name for the hardlink.", parent=self)
+            messagebox.showwarning("Missing Name", "Please enter a valid name for the hardlink.", parent=self)
             return
         try:
             result_path = create_hardlink(self.source_path, dest_dir, dest_name)
@@ -318,9 +319,9 @@ class RenameDialog(tk.Toplevel):
         ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=5)
 
     def _on_rename(self):
-        new_name = self.name_var.get().strip()
+        new_name = sanitize_filename(self.name_var.get().strip())
         if not new_name:
-            messagebox.showwarning("Empty Name", "Please enter a file name.", parent=self)
+            messagebox.showwarning("Empty Name", "Please enter a valid file name.", parent=self)
             return
 
         old_name = os.path.basename(self.file_path)
