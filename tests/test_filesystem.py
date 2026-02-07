@@ -3,6 +3,8 @@
 import os
 import pytest
 
+from unittest.mock import patch
+
 from hardlink_manager.utils.filesystem import (
     copy_item,
     delete_item,
@@ -12,6 +14,7 @@ from hardlink_manager.utils.filesystem import (
     is_regular_file,
     is_same_volume,
     move_item,
+    reveal_in_explorer,
 )
 
 
@@ -188,6 +191,32 @@ class TestMoveItem:
         (dest_dir / "source.txt").write_text("existing")
         with pytest.raises(FileExistsError):
             move_item(str(src), str(dest_dir))
+
+
+class TestRevealInExplorer:
+    @patch("hardlink_manager.utils.filesystem.platform.system", return_value="Linux")
+    @patch("hardlink_manager.utils.filesystem._popen_safe")
+    def test_linux_file(self, mock_popen, mock_sys, tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_text("hello")
+        reveal_in_explorer(str(f))
+        mock_popen.assert_called_once_with(["xdg-open", str(tmp_path)])
+
+    @patch("hardlink_manager.utils.filesystem.platform.system", return_value="Linux")
+    @patch("hardlink_manager.utils.filesystem._popen_safe")
+    def test_linux_folder(self, mock_popen, mock_sys, tmp_path):
+        d = tmp_path / "subdir"
+        d.mkdir()
+        reveal_in_explorer(str(d))
+        mock_popen.assert_called_once_with(["xdg-open", str(d)])
+
+    @patch("hardlink_manager.utils.filesystem.platform.system", return_value="Darwin")
+    @patch("hardlink_manager.utils.filesystem._popen_safe")
+    def test_macos(self, mock_popen, mock_sys, tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_text("hello")
+        reveal_in_explorer(str(f))
+        mock_popen.assert_called_once_with(["open", "-R", str(f)])
 
 
 class TestDeleteItem:

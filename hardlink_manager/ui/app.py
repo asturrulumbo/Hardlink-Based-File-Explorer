@@ -26,7 +26,7 @@ from hardlink_manager.utils.filesystem import (
     get_inode,
     move_item,
     open_file,
-    open_file_with,
+    reveal_in_explorer,
 )
 
 
@@ -89,7 +89,7 @@ class HardlinkManagerApp:
         actions_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Actions", menu=actions_menu)
         actions_menu.add_command(label="Open", command=self._open_file_action)
-        actions_menu.add_command(label="Open With...", command=self._open_with_action)
+        actions_menu.add_command(label="Open in Explorer", command=self._open_in_explorer_action)
         actions_menu.add_separator()
         actions_menu.add_command(label="Create Hardlink...", command=self._create_hardlink_action)
         actions_menu.add_command(label="View Hardlinks...", command=self._view_hardlinks_action)
@@ -170,7 +170,7 @@ class HardlinkManagerApp:
         # -- File context menu --
         self.file_context_menu = tk.Menu(self.root, tearoff=0)
         self.file_context_menu.add_command(label="Open", command=self._open_file_action)
-        self.file_context_menu.add_command(label="Open With...", command=self._open_with_action)
+        self.file_context_menu.add_command(label="Open in Explorer", command=self._open_in_explorer_action)
         self.file_context_menu.add_separator()
         self.file_context_menu.add_command(label="Copy", command=self._copy_action)
         self.file_context_menu.add_command(label="Cut", command=self._cut_action)
@@ -184,6 +184,7 @@ class HardlinkManagerApp:
         # -- Folder context menu --
         self.folder_context_menu = tk.Menu(self.root, tearoff=0)
         self.folder_context_menu.add_command(label="Open Folder", command=self._open_selected_folder)
+        self.folder_context_menu.add_command(label="Open in Explorer", command=self._open_in_explorer_action)
         self.folder_context_menu.add_separator()
         self.folder_context_menu.add_command(label="Copy", command=self._copy_action)
         self.folder_context_menu.add_command(label="Cut", command=self._cut_action)
@@ -447,35 +448,16 @@ class HardlinkManagerApp:
         except Exception as e:
             messagebox.showerror("Error Opening File", str(e), parent=self.root)
 
-    def _open_with_action(self):
-        selected = self.file_list.get_selected_file()
+    def _open_in_explorer_action(self):
+        selected = self.file_list.get_selected_path()
         if not selected:
-            messagebox.showinfo("No File Selected", "Please select a file first.", parent=self.root)
+            messagebox.showinfo("No Selection", "Please select a file or folder first.", parent=self.root)
             return
-
-        system = platform.system()
-        if system == "Windows":
-            # Use the Windows "Open With" dialog
-            from hardlink_manager.utils.filesystem import _popen_safe
-            try:
-                _popen_safe(["rundll32.exe", "shell32.dll,OpenAs_RunDLL", selected])
-                self._set_status(f"Open With: {os.path.basename(selected)}")
-            except Exception as e:
-                messagebox.showerror("Error", str(e), parent=self.root)
-        else:
-            # Let the user browse for a program
-            filetypes = [("All files", "*")] if system != "Darwin" else [("Applications", "*.app"), ("All files", "*")]
-            program = filedialog.askopenfilename(
-                parent=self.root,
-                title="Choose program to open with",
-                filetypes=filetypes,
-            )
-            if program:
-                try:
-                    open_file_with(selected, program)
-                    self._set_status(f"Opened with {os.path.basename(program)}: {os.path.basename(selected)}")
-                except Exception as e:
-                    messagebox.showerror("Error", str(e), parent=self.root)
+        try:
+            reveal_in_explorer(selected)
+            self._set_status(f"Opened in Explorer: {os.path.basename(selected)}")
+        except Exception as e:
+            messagebox.showerror("Error", str(e), parent=self.root)
 
     def _rename_action(self):
         selected = self.file_list.get_selected_path()

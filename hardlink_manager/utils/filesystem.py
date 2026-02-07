@@ -93,13 +93,26 @@ def _popen_safe(args: list[str]) -> None:
     subprocess.Popen(args, **kwargs)
 
 
-def open_file_with(path: str, program: str) -> None:
-    """Open a file with a specific program."""
+def reveal_in_explorer(path: str) -> None:
+    """Open the containing folder in the system file manager and select the item."""
+    import subprocess
+
     system = platform.system()
-    if system == "Darwin":
-        _popen_safe(["open", "-a", program, path])
+    abspath = os.path.abspath(path)
+
+    if system == "Windows":
+        if os.path.isdir(abspath):
+            # Open the folder itself
+            os.startfile(abspath)
+        else:
+            # Open Explorer with the file selected
+            subprocess.Popen(["explorer", "/select,", abspath])
+    elif system == "Darwin":
+        _popen_safe(["open", "-R", abspath])
     else:
-        _popen_safe([program, path])
+        # Linux: open the containing directory
+        folder = abspath if os.path.isdir(abspath) else os.path.dirname(abspath)
+        _popen_safe(["xdg-open", folder])
 
 
 def copy_item(src: str, dest_dir: str, new_name: str = "") -> str:
