@@ -3,6 +3,7 @@
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from typing import Callable, Optional
 
 from hardlink_manager.core.hardlink_ops import create_hardlink, delete_hardlink, find_all_hardlinks
 from hardlink_manager.utils.filesystem import (
@@ -96,11 +97,14 @@ class CreateHardlinkDialog(tk.Toplevel):
 class ViewHardlinksDialog(tk.Toplevel):
     """Dialog showing all hardlinks to a given file."""
 
-    def __init__(self, parent, file_path: str, search_dirs: list[str]):
+    def __init__(self, parent, file_path: str, search_dirs: list[str],
+                 on_navigate: Optional[Callable[[str], None]] = None):
         super().__init__(parent)
         self.title("View Hardlinks")
         self.file_path = file_path
         self.search_dirs = search_dirs
+        self.on_navigate = on_navigate
+        self._link_paths: list[str] = []
         self.transient(parent)
         self.grab_set()
 
@@ -145,7 +149,8 @@ class ViewHardlinksDialog(tk.Toplevel):
         ttk.Label(info_frame, text=f"Size: {format_file_size(size)}").pack(anchor=tk.W)
 
         # Hardlink list
-        ttk.Label(frame, text="Hardlink locations found:").pack(anchor=tk.W)
+        hint = "Double-click a path to navigate there." if self.on_navigate else ""
+        ttk.Label(frame, text=f"Hardlink locations found:  {hint}").pack(anchor=tk.W)
 
         list_frame = ttk.Frame(frame)
         list_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
@@ -163,13 +168,31 @@ class ViewHardlinksDialog(tk.Toplevel):
             if links:
                 for link in links:
                     self.listbox.insert(tk.END, link)
+                    self._link_paths.append(link)
             else:
                 self.listbox.insert(tk.END, "(No additional hardlinks found in searched directories)")
         except Exception as e:
             self.listbox.insert(tk.END, f"Error: {e}")
 
+        # Double-click to navigate
+        if self.on_navigate:
+            self.listbox.bind("<Double-1>", self._on_double_click)
+
         # Close button
         ttk.Button(frame, text="Close", command=self.destroy).pack(pady=(10, 0))
+
+    def _on_double_click(self, event):
+        sel = self.listbox.curselection()
+        if not sel or not self.on_navigate:
+            return
+        idx = sel[0]
+        if idx < len(self._link_paths):
+            path = self._link_paths[idx]
+            # Navigate to the containing folder of the hardlink
+            folder = os.path.dirname(path)
+            if os.path.isdir(folder):
+                self.destroy()
+                self.on_navigate(folder)
 
 
 class DeleteHardlinkDialog(tk.Toplevel):
@@ -341,3 +364,82 @@ class RenameDialog(tk.Toplevel):
             self.destroy()
         except Exception as e:
             messagebox.showerror("Error Renaming", str(e), parent=self)
+
+
+class ViewMirrorsDialog(tk.Toplevel):
+    """Dialog showing all mirror group folders for a given folder."""
+
+    def __init__(self, parent, folder_path: str, group,
+                 on_navigate: Optional[Callable[[str], None]] = None):
+        super().__init__(parent)
+        self.title("View Hardlink Mirrors")
+        self.folder_path = folder_path
+        self.group = group
+        self.on_navigate = on_navigate
+        self._folder_paths: list[str] = []
+        self.transient(parent)
+        self.grab_set()
+
+        self.minsize(550, 300)
+        self._build_ui()
+        self._center_on_parent(parent)
+
+    def _center_on_parent(self, parent):
+        self.update_idletasks()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        w, h = self.winfo_width(), self.winfo_height()
+        x = px + (pw - w) // 2
+        y = py + (ph - h) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _build_ui(self):
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        # Folder info
+        info_frame = ttk.LabelFrame(frame, text="Mirror Group", padding=5)
+        info_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(info_frame, text=f"Folder: {os.path.basename(self.folder_path)}").pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"Group: {self.group.auto_name()}").pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"Sync: {'Enabled' if self.group.sync_enabled else 'Disabled'}").pack(anchor=tk.W)
+
+        # Mirror locations
+        hint = "Double-click a path to navigate there." if self.on_navigate else ""
+        ttk.Label(frame, text=f"Mirror locations:  {hint}").pack(anchor=tk.W)
+
+        list_frame = ttk.Frame(frame)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
+
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, font=("TkDefaultFont", 9))
+        self.listbox.pack(fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.listbox.yview)
+
+        for folder in self.group.folders:
+            self.listbox.insert(tk.END, folder)
+            self._folder_paths.append(folder)
+
+        if not self.group.folders:
+            self.listbox.insert(tk.END, "(No folders in this mirror group)")
+
+        # Double-click to navigate
+        if self.on_navigate:
+            self.listbox.bind("<Double-1>", self._on_double_click)
+
+        # Close button
+        ttk.Button(frame, text="Close", command=self.destroy).pack(pady=(10, 0))
+
+    def _on_double_click(self, event):
+        sel = self.listbox.curselection()
+        if not sel or not self.on_navigate:
+            return
+        idx = sel[0]
+        if idx < len(self._folder_paths):
+            folder = self._folder_paths[idx]
+            if os.path.isdir(folder):
+                self.destroy()
+                self.on_navigate(folder)

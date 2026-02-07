@@ -17,6 +17,7 @@ from hardlink_manager.ui.dialogs import (
     DeleteHardlinkDialog,
     RenameDialog,
     ViewHardlinksDialog,
+    ViewMirrorsDialog,
 )
 from hardlink_manager.utils.filesystem import (
     copy_item,
@@ -194,6 +195,7 @@ class HardlinkManagerApp:
         self.folder_context_menu.add_separator()
         self.folder_context_menu.add_command(label="Create Hardlink Mirror...", command=self._create_mirror_from_folder)
         self.folder_context_menu.add_command(label="Add to Existing Mirror...", command=self._add_folder_to_mirror)
+        self.folder_context_menu.add_command(label="View Hardlink Mirrors", command=self._view_mirrors_action)
         self.folder_context_menu.add_separator()
         self.folder_context_menu.add_command(label="Rename...", command=self._rename_action)
         self.folder_context_menu.add_command(label="Delete", command=self._delete_action)
@@ -519,13 +521,35 @@ class HardlinkManagerApp:
             return
         search_dirs = self._root_dirs if self._root_dirs else [os.path.dirname(selected)]
         try:
-            dlg = ViewHardlinksDialog(self.root, selected, search_dirs)
+            dlg = ViewHardlinksDialog(
+                self.root, selected, search_dirs,
+                on_navigate=self._navigate_to_folder,
+            )
             dlg.wait_window()
         except Exception as e:
             try:
                 messagebox.showerror("Error", f"Could not view hardlinks:\n{e}", parent=self.root)
             except Exception:
                 pass
+
+    def _view_mirrors_action(self):
+        selected = self.file_list.get_selected_path()
+        if not selected or not os.path.isdir(selected):
+            messagebox.showinfo("No Folder Selected", "Please select a folder first.", parent=self.root)
+            return
+        group = self.registry.find_group_for_folder(selected)
+        if not group:
+            messagebox.showinfo(
+                "Not Mirrored",
+                f"'{os.path.basename(selected)}' is not part of any mirror group.",
+                parent=self.root,
+            )
+            return
+        dlg = ViewMirrorsDialog(
+            self.root, selected, group,
+            on_navigate=self._navigate_to_folder,
+        )
+        dlg.wait_window()
 
     def _delete_action(self):
         """Delete the selected file(s) or folder(s)."""
