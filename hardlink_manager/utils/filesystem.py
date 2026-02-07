@@ -77,17 +77,29 @@ def open_file(path: str) -> None:
         subprocess.Popen(["xdg-open", path])
 
 
-def open_file_with(path: str, program: str) -> None:
-    """Open a file with a specific program."""
+def _popen_safe(args: list[str]) -> None:
+    """Launch a subprocess safely, even in PyInstaller --noconsole mode."""
     import subprocess
 
+    kwargs: dict = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if platform.system() == "Windows":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        kwargs["startupinfo"] = si
+    subprocess.Popen(args, **kwargs)
+
+
+def open_file_with(path: str, program: str) -> None:
+    """Open a file with a specific program."""
     system = platform.system()
-    if system == "Windows":
-        subprocess.Popen([program, path])
-    elif system == "Darwin":
-        subprocess.Popen(["open", "-a", program, path])
+    if system == "Darwin":
+        _popen_safe(["open", "-a", program, path])
     else:
-        subprocess.Popen([program, path])
+        _popen_safe([program, path])
 
 
 def copy_item(src: str, dest_dir: str, new_name: str = "") -> str:

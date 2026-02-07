@@ -456,9 +456,12 @@ class HardlinkManagerApp:
         system = platform.system()
         if system == "Windows":
             # Use the Windows "Open With" dialog
-            import subprocess
-            subprocess.Popen(["rundll32.exe", "shell32.dll,OpenAs_RunDLL", selected])
-            self._set_status(f"Open With: {os.path.basename(selected)}")
+            from hardlink_manager.utils.filesystem import _popen_safe
+            try:
+                _popen_safe(["rundll32.exe", "shell32.dll,OpenAs_RunDLL", selected])
+                self._set_status(f"Open With: {os.path.basename(selected)}")
+            except Exception as e:
+                messagebox.showerror("Error", str(e), parent=self.root)
         else:
             # Let the user browse for a program
             filetypes = [("All files", "*")] if system != "Darwin" else [("Applications", "*.app"), ("All files", "*")]
