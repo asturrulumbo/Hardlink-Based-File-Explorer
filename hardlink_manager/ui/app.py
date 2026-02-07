@@ -9,7 +9,7 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 from hardlink_manager.core.mirror_groups import MirrorGroupRegistry
 from hardlink_manager.core.sync import delete_from_group, sync_group
 from hardlink_manager.core.watcher import MirrorGroupWatcher
-from hardlink_manager.ui.file_browser import DirectoryTree, FileListPanel
+from hardlink_manager.ui.file_browser import DirectoryTree, FileListPanel, TabbedFileBrowser
 from hardlink_manager.ui.mirror_panel import MirrorGroupPanel
 from hardlink_manager.ui.search_panel import SearchPanel
 from hardlink_manager.ui.dialogs import (
@@ -43,8 +43,8 @@ class HardlinkManagerApp:
         # Track root directories for hardlink searches
         self._root_dirs: list[str] = []
 
-        # Clipboard for copy/cut operations: (path, mode) where mode is "copy" or "cut"
-        self._clipboard: tuple[str, str] | None = None
+        # Clipboard for copy/cut operations: (paths, mode) where mode is "copy" or "cut"
+        self._clipboard: tuple[list[str], str] | None = None
 
         # Mirror group registry and watcher
         self.registry = MirrorGroupRegistry()
@@ -127,7 +127,7 @@ class HardlinkManagerApp:
         browser_tab = ttk.Frame(self.notebook)
         self.notebook.add(browser_tab, text="File Browser")
 
-        self.file_list = FileListPanel(
+        self.file_list = TabbedFileBrowser(
             browser_tab,
             on_file_select=self._on_file_select,
             on_file_open=self._open_file_action,
@@ -145,6 +145,7 @@ class HardlinkManagerApp:
             registry=self.registry,
             on_change=self._on_mirror_groups_changed,
             status_callback=self._set_status,
+            on_navigate=self._navigate_to_folder,
         )
         self.mirror_panel.pack(fill=tk.BOTH, expand=True)
 
@@ -185,6 +186,7 @@ class HardlinkManagerApp:
         # -- Folder context menu --
         self.folder_context_menu = tk.Menu(self.root, tearoff=0)
         self.folder_context_menu.add_command(label="Open Folder", command=self._open_selected_folder)
+        self.folder_context_menu.add_command(label="Open in New Tab", command=self._open_in_new_tab)
         self.folder_context_menu.add_command(label="Open in Explorer", command=self._open_in_explorer_action)
         self.folder_context_menu.add_separator()
         self.folder_context_menu.add_command(label="Copy", command=self._copy_action)
@@ -200,10 +202,10 @@ class HardlinkManagerApp:
         self.bg_context_menu = tk.Menu(self.root, tearoff=0)
         self.bg_context_menu.add_command(label="Paste", command=self._paste_action)
 
-        # Bind right-click on the file list
-        self.file_list.file_tree.bind("<Button-3>", self._show_context_menu)
+        # Bind right-click on all file list tabs
+        self.file_list.bind_tree("<Button-3>", self._show_context_menu)
         if platform.system() == "Darwin":
-            self.file_list.file_tree.bind("<Button-2>", self._show_context_menu)
+            self.file_list.bind_tree("<Button-2>", self._show_context_menu)
 
     def _bind_keyboard_shortcuts(self):
         self.root.bind_all("<Control-c>", lambda e: self._copy_action())
@@ -213,9 +215,13 @@ class HardlinkManagerApp:
         self.root.bind_all("<F2>", lambda e: self._rename_action())
 
     def _show_context_menu(self, event):
-        item = self.file_list.file_tree.identify_row(event.y)
+        tree = event.widget
+        item = tree.identify_row(event.y)
         if item:
-            self.file_list.file_tree.selection_set(item)
+            # Only change selection if the clicked item isn't already selected
+            # (preserves multi-selection for right-click)
+            if item not in tree.selection():
+                tree.selection_set(item)
             if self.file_list.is_selected_dir():
                 self.folder_context_menu.tk_popup(event.x_root, event.y_root)
             else:
@@ -255,11 +261,23 @@ class HardlinkManagerApp:
     def _on_dir_open(self, path: str):
         self._set_status(f"Viewing: {path}")
 
+    def _navigate_to_folder(self, path: str):
+        """Navigate the file browser to a folder and switch to the File Browser tab."""
+        self.notebook.select(0)  # Switch to File Browser tab
+        self.file_list.load_directory(path)
+        self._set_status(f"Viewing: {path}")
+
     def _open_selected_folder(self):
         path = self.file_list.get_selected_path()
         if path and os.path.isdir(path):
             self.file_list.load_directory(path)
             self._set_status(f"Viewing: {path}")
+
+    def _open_in_new_tab(self):
+        path = self.file_list.get_selected_path()
+        if path and os.path.isdir(path):
+            self.file_list.open_in_new_tab(path)
+            self._set_status(f"New tab: {path}")
 
     # -- Mirror group actions --
 
@@ -359,18 +377,20 @@ class HardlinkManagerApp:
     # -- Clipboard operations --
 
     def _copy_action(self):
-        selected = self.file_list.get_selected_path()
+        selected = self.file_list.get_selected_paths()
         if not selected:
             return
         self._clipboard = (selected, "copy")
-        self._set_status(f"Copied: {os.path.basename(selected)}")
+        names = ", ".join(os.path.basename(p) for p in selected)
+        self._set_status(f"Copied {len(selected)} item(s): {names}")
 
     def _cut_action(self):
-        selected = self.file_list.get_selected_path()
+        selected = self.file_list.get_selected_paths()
         if not selected:
             return
         self._clipboard = (selected, "cut")
-        self._set_status(f"Cut: {os.path.basename(selected)}")
+        names = ", ".join(os.path.basename(p) for p in selected)
+        self._set_status(f"Cut {len(selected)} item(s): {names}")
 
     def _paste_action(self):
         if not self._clipboard:
@@ -380,29 +400,31 @@ class HardlinkManagerApp:
             self._set_status("Open a folder first.")
             return
 
-        src, mode = self._clipboard
+        sources, mode = self._clipboard
         dest_dir = self.file_list.current_dir
+        pasted = 0
+        errors = []
 
-        if not os.path.exists(src):
-            self._set_status(f"Source no longer exists: {src}")
+        for src in sources:
+            if not os.path.exists(src):
+                continue
+            try:
+                if mode == "copy":
+                    copy_item(src, dest_dir)
+                else:
+                    move_item(src, dest_dir)
+                pasted += 1
+            except (FileExistsError, OSError) as e:
+                errors.append(str(e))
+
+        if mode == "cut":
             self._clipboard = None
-            return
 
-        try:
-            if mode == "copy":
-                result = copy_item(src, dest_dir)
-                self._set_status(f"Pasted (copy): {os.path.basename(result)}")
-            else:  # cut
-                result = move_item(src, dest_dir)
-                self._set_status(f"Moved: {os.path.basename(result)}")
-                self._clipboard = None  # Clear clipboard after move
-        except FileExistsError as e:
-            messagebox.showerror("Paste Error", str(e), parent=self.root)
-            return
-        except Exception as e:
-            messagebox.showerror("Paste Error", str(e), parent=self.root)
-            return
-
+        if errors:
+            messagebox.showerror("Paste Error", "\n".join(errors), parent=self.root)
+        if pasted:
+            verb = "Copied" if mode == "copy" else "Moved"
+            self._set_status(f"{verb} {pasted} item(s).")
         self.file_list.load_directory(self.file_list.current_dir)
 
     # -- File/folder menu actions --
@@ -506,16 +528,24 @@ class HardlinkManagerApp:
                 pass
 
     def _delete_action(self):
-        """Delete the selected file or folder."""
-        selected = self.file_list.get_selected_path()
-        if not selected:
+        """Delete the selected file(s) or folder(s)."""
+        selected_paths = self.file_list.get_selected_paths()
+        if not selected_paths:
             messagebox.showinfo("No Selection", "Please select a file or folder first.", parent=self.root)
             return
 
-        is_dir = os.path.isdir(selected)
+        # Single item: use detailed dialogs (mirror-group aware, hardlink info)
+        if len(selected_paths) == 1:
+            self._delete_single(selected_paths[0])
+        else:
+            self._delete_multiple(selected_paths)
 
-        if is_dir:
-            # Folder deletion
+        if self.file_list.current_dir:
+            self.file_list.load_directory(self.file_list.current_dir)
+
+    def _delete_single(self, selected: str):
+        """Delete a single file or folder with detailed confirmation."""
+        if os.path.isdir(selected):
             name = os.path.basename(selected)
             if not messagebox.askyesno(
                 "Delete Folder",
@@ -530,9 +560,7 @@ class HardlinkManagerApp:
                 self._set_status(f"Deleted folder: {name}")
             except Exception as e:
                 messagebox.showerror("Error", str(e), parent=self.root)
-                return
         else:
-            # File deletion — mirror-group aware
             result = self.registry.find_group_for_path(selected)
             group = result[0] if result else None
 
@@ -554,8 +582,37 @@ class HardlinkManagerApp:
                 if dlg.deleted:
                     self._set_status(f"Deleted: {selected}")
 
-        if self.file_list.current_dir:
-            self.file_list.load_directory(self.file_list.current_dir)
+    def _delete_multiple(self, paths: list[str]):
+        """Delete multiple selected items with a single confirmation."""
+        names = "\n".join(f"  - {os.path.basename(p)}" for p in paths[:10])
+        if len(paths) > 10:
+            names += f"\n  ... and {len(paths) - 10} more"
+        if not messagebox.askyesno(
+            "Delete Items",
+            f"Delete {len(paths)} selected item(s)?\n\n{names}\n\n"
+            "This cannot be undone.",
+            parent=self.root,
+        ):
+            return
+
+        deleted_count = 0
+        errors = []
+        for path in paths:
+            try:
+                # Check mirror group membership for files
+                if os.path.isfile(path):
+                    result = self.registry.find_group_for_path(path)
+                    if result:
+                        delete_from_group(path, result[0])
+                        deleted_count += 1
+                        continue
+                delete_item(path)
+                deleted_count += 1
+            except Exception as e:
+                errors.append(f"{os.path.basename(path)}: {e}")
+        if errors:
+            messagebox.showerror("Delete Errors", "\n".join(errors), parent=self.root)
+        self._set_status(f"Deleted {deleted_count} item(s).")
 
     def _show_about(self):
         watcher_status = "running" if self.watcher.is_running else "stopped"

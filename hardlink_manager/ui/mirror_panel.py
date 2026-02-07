@@ -14,11 +14,13 @@ class MirrorGroupPanel(ttk.Frame):
 
     def __init__(self, parent, registry: MirrorGroupRegistry,
                  on_change: Optional[Callable[[], None]] = None,
-                 status_callback: Optional[Callable[[str], None]] = None):
+                 status_callback: Optional[Callable[[str], None]] = None,
+                 on_navigate: Optional[Callable[[str], None]] = None):
         super().__init__(parent)
         self.registry = registry
         self.on_change = on_change
         self.status_callback = status_callback
+        self.on_navigate = on_navigate
         self._build_ui()
         self.refresh_list()
 
@@ -64,6 +66,8 @@ class MirrorGroupPanel(ttk.Frame):
         self.detail_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         detail_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
+        self.detail_list.bind("<Double-1>", self._on_detail_double_click)
+
     def refresh_list(self):
         """Refresh the group list from the registry."""
         # Remember selection
@@ -103,6 +107,14 @@ class MirrorGroupPanel(ttk.Frame):
             return
         for folder in group.folders:
             self.detail_list.insert(tk.END, folder)
+
+    def _on_detail_double_click(self, event):
+        sel = self.detail_list.curselection()
+        if not sel:
+            return
+        folder = self.detail_list.get(sel[0])
+        if os.path.isdir(folder) and self.on_navigate:
+            self.on_navigate(folder)
 
     def _new_group(self):
         dlg = MirrorGroupDialog(self.winfo_toplevel(), title="New Mirror Group")

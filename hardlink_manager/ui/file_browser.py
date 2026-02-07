@@ -154,7 +154,7 @@ class FileListPanel(ttk.Frame):
             list_frame,
             columns=self.COLUMNS,
             show="headings",
-            selectmode="browse",
+            selectmode="extended",
         )
         for col in self.COLUMNS:
             self.file_tree.heading(col, text=self.HEADERS[col], command=lambda c=col: self._sort_by(c))
@@ -260,6 +260,15 @@ class FileListPanel(ttk.Frame):
             return self._item_paths.get(sel[0])
         return None
 
+    def get_selected_paths(self) -> list[str]:
+        """Get all selected paths (files and folders)."""
+        result = []
+        for item_id in self.file_tree.selection():
+            path = self._item_paths.get(item_id)
+            if path:
+                result.append(path)
+        return result
+
     def is_selected_dir(self) -> bool:
         """Check whether the currently selected item is a directory."""
         sel = self.file_tree.selection()
@@ -335,3 +344,123 @@ class FileListPanel(ttk.Frame):
 
         for index, (_val, item) in enumerate(items):
             self.file_tree.move(item, "", index)
+
+
+class TabbedFileBrowser(ttk.Frame):
+    """A tabbed container of FileListPanels, like Windows 11 Explorer tabs.
+
+    Provides multiple browsing tabs with a "+" button to create new ones,
+    and middle-click or close button to remove them.
+    """
+
+    def __init__(self, parent,
+                 on_file_select: Optional[Callable[[str], None]] = None,
+                 on_file_open: Optional[Callable[[str], None]] = None,
+                 on_dir_select: Optional[Callable[[str], None]] = None,
+                 on_dir_open: Optional[Callable[[str], None]] = None):
+        super().__init__(parent)
+        self.on_file_select = on_file_select
+        self.on_file_open = on_file_open
+        self.on_dir_select = on_dir_select
+        self.on_dir_open = on_dir_open
+
+        self._tabs: list[FileListPanel] = []
+        self._tab_counter = 0
+        self._tree_bindings: list[tuple[str, object]] = []
+
+        self._notebook = ttk.Notebook(self)
+        self._notebook.pack(fill=tk.BOTH, expand=True)
+        self._notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+
+        # Add-tab button bar
+        btn_bar = ttk.Frame(self)
+        btn_bar.place(relx=1.0, y=0, anchor="ne")
+        self._add_btn = ttk.Button(btn_bar, text="+", width=3, command=self._add_empty_tab)
+        self._add_btn.pack(side=tk.LEFT)
+        self._close_btn = ttk.Button(btn_bar, text="\u00d7", width=3, command=self._close_current_tab)
+        self._close_btn.pack(side=tk.LEFT)
+
+        # Create the first tab
+        self._add_empty_tab()
+
+    def _make_panel(self) -> FileListPanel:
+        panel = FileListPanel(
+            self._notebook,
+            on_file_select=self.on_file_select,
+            on_file_open=self.on_file_open,
+            on_dir_select=self.on_dir_select,
+            on_dir_open=self.on_dir_open,
+        )
+        # Apply any registered bindings to this new panel's tree
+        for sequence, handler in self._tree_bindings:
+            panel.file_tree.bind(sequence, handler)
+        return panel
+
+    def bind_tree(self, sequence: str, handler):
+        """Bind an event to the file_tree of ALL tabs (existing and future)."""
+        self._tree_bindings.append((sequence, handler))
+        for panel in self._tabs:
+            panel.file_tree.bind(sequence, handler)
+
+    def _add_empty_tab(self):
+        self._tab_counter += 1
+        panel = self._make_panel()
+        self._tabs.append(panel)
+        self._notebook.add(panel, text=f"Tab {self._tab_counter}")
+        self._notebook.select(len(self._tabs) - 1)
+
+    def open_in_new_tab(self, path: str):
+        """Create a new tab and navigate it to the given directory."""
+        self._tab_counter += 1
+        panel = self._make_panel()
+        self._tabs.append(panel)
+        name = os.path.basename(path) or path
+        self._notebook.add(panel, text=name)
+        self._notebook.select(len(self._tabs) - 1)
+        panel.load_directory(path)
+
+    def _close_current_tab(self):
+        if len(self._tabs) <= 1:
+            return  # Always keep at least one tab
+        idx = self._notebook.index("current")
+        panel = self._tabs.pop(idx)
+        self._notebook.forget(idx)
+        panel.destroy()
+
+    def _on_tab_changed(self, event):
+        pass  # Could update status bar, etc.
+
+    # -- Proxy properties/methods to the active panel --
+
+    @property
+    def active_panel(self) -> FileListPanel:
+        idx = self._notebook.index("current")
+        return self._tabs[idx]
+
+    # Alias so app.py can use self.file_list.X seamlessly
+    @property
+    def current_dir(self) -> Optional[str]:
+        return self.active_panel.current_dir
+
+    @property
+    def file_tree(self) -> ttk.Treeview:
+        return self.active_panel.file_tree
+
+    def load_directory(self, path: str):
+        panel = self.active_panel
+        panel.load_directory(path)
+        name = os.path.basename(path) or path
+        idx = self._notebook.index("current")
+        self._notebook.tab(idx, text=name)
+
+    def get_selected_file(self) -> Optional[str]:
+        return self.active_panel.get_selected_file()
+
+    def get_selected_path(self) -> Optional[str]:
+        return self.active_panel.get_selected_path()
+
+    def get_selected_paths(self) -> list[str]:
+        return self.active_panel.get_selected_paths()
+
+    def is_selected_dir(self) -> bool:
+        return self.active_panel.is_selected_dir()
