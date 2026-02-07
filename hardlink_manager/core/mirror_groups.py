@@ -199,6 +199,120 @@ class MirrorGroupRegistry:
         """Check if a folder belongs to any mirror group."""
         return self.find_group_for_folder(folder) is not None
 
+    def scan_content_mirrors(self, root_folders: list[str]) -> list["MirrorGroup"]:
+        """Scan folders for content-based mirrors.
+
+        Recursively walks each root folder and all its subfolders.
+        Computes a content fingerprint for each directory based on the
+        SHA-256 hashes of all contained files, structured by directory
+        hierarchy but ignoring file and folder names.
+
+        Two folders are considered mirrors if they have identical
+        fingerprints -- same file contents in the same tree structure,
+        regardless of the names used for files and folders.
+
+        Returns:
+            List of newly created MirrorGroup objects.
+        """
+        import hashlib
+
+        root_folders = [os.path.normpath(os.path.abspath(f))
+                        for f in root_folders if os.path.isdir(f)]
+        if not root_folders:
+            return []
+
+        fp_cache: dict[str, str | None] = {}
+
+        def _hash_file(filepath: str) -> str:
+            """Return SHA-256 hex digest of a file's contents."""
+            h = hashlib.sha256()
+            with open(filepath, 'rb') as f:
+                for chunk in iter(lambda: f.read(65536), b''):
+                    h.update(chunk)
+            return h.hexdigest()
+
+        def _dir_fingerprint(dirpath: str) -> str | None:
+            """Compute a content-based fingerprint for a directory tree.
+
+            The fingerprint is built from sorted file-content hashes
+            at this level and sorted child-directory fingerprints,
+            so names are irrelevant but tree structure is preserved.
+            """
+            dirpath = os.path.normpath(dirpath)
+            if dirpath in fp_cache:
+                return fp_cache[dirpath]
+
+            try:
+                entries = list(os.scandir(dirpath))
+            except (OSError, PermissionError):
+                fp_cache[dirpath] = None
+                return None
+
+            file_fps: list[str] = []
+            child_fps: list[str] = []
+
+            for entry in entries:
+                try:
+                    if entry.is_file(follow_symlinks=False):
+                        file_fps.append(_hash_file(entry.path))
+                    elif entry.is_dir(follow_symlinks=False):
+                        cfp = _dir_fingerprint(entry.path)
+                        if cfp is not None:
+                            child_fps.append(cfp)
+                except (OSError, PermissionError):
+                    continue
+
+            if not file_fps and not child_fps:
+                fp_cache[dirpath] = None
+                return None
+
+            file_fps.sort()
+            child_fps.sort()
+
+            combined = hashlib.sha256(
+                (';'.join(file_fps) + '|' + ';'.join(child_fps)).encode()
+            ).hexdigest()
+            fp_cache[dirpath] = combined
+            return combined
+
+        # Compute fingerprints starting from each root
+        for root in root_folders:
+            _dir_fingerprint(root)
+
+        # Group directories by fingerprint
+        fp_groups: dict[str, list[str]] = {}
+        for dirpath, fp in fp_cache.items():
+            if fp is not None:
+                fp_groups.setdefault(fp, []).append(dirpath)
+
+        # Determine existing folder sets to avoid duplicates
+        existing_sets: list[set[str]] = []
+        for group in self._groups.values():
+            norm = {os.path.normpath(os.path.abspath(f)) for f in group.folders}
+            existing_sets.append(norm)
+
+        new_groups: list[MirrorGroup] = []
+        for folders in fp_groups.values():
+            if len(folders) < 2:
+                continue
+            # Remove ancestor directories when a descendant is also in the group
+            filtered = [
+                f for f in folders
+                if not any(
+                    other != f and other.startswith(f + os.sep)
+                    for other in folders
+                )
+            ]
+            if len(filtered) < 2:
+                continue
+            folder_set = set(filtered)
+            if folder_set in existing_sets:
+                continue
+            group = self.create_group(folders=filtered)
+            new_groups.append(group)
+
+        return new_groups
+
     def scan_for_mirrors(self, folders: list[str]) -> list["MirrorGroup"]:
         """Scan folders and discover mirror groups from shared hardlinks.
 

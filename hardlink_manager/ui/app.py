@@ -147,6 +147,7 @@ class HardlinkManagerApp:
             on_change=self._on_mirror_groups_changed,
             status_callback=self._set_status,
             on_navigate=self._navigate_to_folder,
+            get_scan_folders=lambda: list(self._root_dirs),
         )
         self.mirror_panel.pack(fill=tk.BOTH, expand=True)
 
