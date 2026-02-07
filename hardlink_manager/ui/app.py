@@ -508,9 +508,12 @@ class HardlinkManagerApp:
         search_dirs = self._root_dirs if self._root_dirs else [os.path.dirname(selected)]
         try:
             dlg = ViewHardlinksDialog(self.root, selected, search_dirs)
-            self.root.wait_window(dlg)
+            dlg.wait_window()
         except Exception as e:
-            messagebox.showerror("Error", str(e), parent=self.root)
+            try:
+                messagebox.showerror("Error", f"Could not view hardlinks:\n{e}", parent=self.root)
+            except Exception:
+                pass
 
     def _delete_action(self):
         """Delete the selected file or folder."""

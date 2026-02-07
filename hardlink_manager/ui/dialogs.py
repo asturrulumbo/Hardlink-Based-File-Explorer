@@ -104,7 +104,14 @@ class ViewHardlinksDialog(tk.Toplevel):
         self.grab_set()
 
         self.minsize(550, 350)
-        self._build_ui()
+        try:
+            self._build_ui()
+        except Exception as e:
+            # Ensure dialog is visible even if building fails
+            frame = ttk.Frame(self, padding=10)
+            frame.pack(fill=tk.BOTH, expand=True)
+            ttk.Label(frame, text=f"Error loading hardlinks:\n{e}", wraplength=500).pack(pady=10)
+            ttk.Button(frame, text="Close", command=self.destroy).pack()
         self._center_on_parent(parent)
 
     def _center_on_parent(self, parent):
@@ -177,7 +184,13 @@ class DeleteHardlinkDialog(tk.Toplevel):
         self.grab_set()
 
         self.minsize(500, 250)
-        self._build_ui()
+        try:
+            self._build_ui()
+        except Exception as e:
+            frame = ttk.Frame(self, padding=10)
+            frame.pack(fill=tk.BOTH, expand=True)
+            ttk.Label(frame, text=f"Error:\n{e}", wraplength=450).pack(pady=10)
+            ttk.Button(frame, text="Close", command=self.destroy).pack()
         self._center_on_parent(parent)
 
     def _center_on_parent(self, parent):
