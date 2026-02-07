@@ -533,8 +533,8 @@ class HardlinkManagerApp:
                 return
         else:
             # File deletion — mirror-group aware
-            folder = os.path.dirname(os.path.abspath(selected))
-            group = self.registry.find_group_for_folder(folder)
+            result = self.registry.find_group_for_path(selected)
+            group = result[0] if result else None
 
             if group is not None:
                 folder_list = "\n".join(f"  - {f}" for f in group.folders)

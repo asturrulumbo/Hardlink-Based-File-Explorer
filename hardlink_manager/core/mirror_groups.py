@@ -161,6 +161,21 @@ class MirrorGroupRegistry:
                     return group
         return None
 
+    def find_group_for_path(self, path: str) -> Optional[tuple["MirrorGroup", str]]:
+        """Find the mirror group that contains a path (file or subfolder).
+
+        Returns (group, group_folder) where group_folder is the top-level
+        folder that is a parent of path, or None if no match.
+        """
+        path = os.path.normpath(os.path.abspath(path))
+        for group in self._groups.values():
+            for gf in group.folders:
+                norm_gf = os.path.normpath(os.path.abspath(gf))
+                # path is inside (or equal to) this group folder
+                if path == norm_gf or path.startswith(norm_gf + os.sep):
+                    return (group, norm_gf)
+        return None
+
     def is_folder_in_group(self, folder: str) -> bool:
         """Check if a folder belongs to any mirror group."""
         return self.find_group_for_folder(folder) is not None

@@ -84,6 +84,38 @@ class TestSyncFileToGroup:
         assert os.path.isdir(new_folder)
 
 
+    def test_syncs_file_in_subdirectory(self, mirror_group, mirror_folders):
+        # Create a file in a subdirectory of the first folder
+        sub = os.path.join(mirror_folders[0], "subdir")
+        os.makedirs(sub)
+        src = os.path.join(sub, "deep.txt")
+        with open(src, "w") as f:
+            f.write("deep content")
+
+        created = sync_file_to_group(src, mirror_group)
+
+        assert len(created) == 2
+        for folder in mirror_folders[1:]:
+            dest = os.path.join(folder, "subdir", "deep.txt")
+            assert os.path.exists(dest)
+            assert get_inode(dest) == get_inode(src)
+
+    def test_syncs_file_in_nested_subdirectory(self, mirror_group, mirror_folders):
+        sub = os.path.join(mirror_folders[0], "a", "b", "c")
+        os.makedirs(sub)
+        src = os.path.join(sub, "nested.txt")
+        with open(src, "w") as f:
+            f.write("nested")
+
+        created = sync_file_to_group(src, mirror_group)
+
+        assert len(created) == 2
+        for folder in mirror_folders[1:]:
+            dest = os.path.join(folder, "a", "b", "c", "nested.txt")
+            assert os.path.exists(dest)
+            assert get_inode(dest) == get_inode(src)
+
+
 class TestSyncGroup:
     def test_full_sync(self, mirror_group, mirror_folders):
         # Create different files in different folders
@@ -132,6 +164,43 @@ class TestSyncGroup:
             assert get_inode(os.path.join(folder, "linked.txt")) == src_inode
 
 
+    def test_sync_group_recursive(self, mirror_group, mirror_folders):
+        # Create files in subdirectories
+        sub_a = os.path.join(mirror_folders[0], "docs")
+        os.makedirs(sub_a)
+        with open(os.path.join(sub_a, "readme.txt"), "w") as f:
+            f.write("readme")
+
+        sub_b = os.path.join(mirror_folders[1], "images")
+        os.makedirs(sub_b)
+        with open(os.path.join(sub_b, "photo.txt"), "w") as f:
+            f.write("photo")
+
+        created = sync_group(mirror_group)
+
+        # docs/readme.txt synced to mirror_b and mirror_c
+        # images/photo.txt synced to mirror_a and mirror_c
+        assert len(created) == 4
+
+        for folder in mirror_folders:
+            assert os.path.exists(os.path.join(folder, "docs", "readme.txt"))
+            assert os.path.exists(os.path.join(folder, "images", "photo.txt"))
+
+    def test_sync_group_deeply_nested(self, mirror_group, mirror_folders):
+        deep = os.path.join(mirror_folders[0], "a", "b", "c")
+        os.makedirs(deep)
+        src = os.path.join(deep, "file.txt")
+        with open(src, "w") as f:
+            f.write("deep")
+
+        sync_group(mirror_group)
+
+        for folder in mirror_folders:
+            dest = os.path.join(folder, "a", "b", "c", "file.txt")
+            assert os.path.exists(dest)
+            assert get_inode(dest) == get_inode(src)
+
+
 class TestDeleteFromGroup:
     def test_deletes_from_all_folders(self, mirror_group, mirror_folders):
         # Create and sync a file
@@ -164,6 +233,21 @@ class TestDeleteFromGroup:
         # Should delete from folder_a and folder_c, but not folder_b
         assert len(deleted) == 2
         assert os.path.exists(conflict)
+
+    def test_delete_from_subdirectory(self, mirror_group, mirror_folders):
+        # Create a file in a subdirectory and sync
+        sub = os.path.join(mirror_folders[0], "subdir")
+        os.makedirs(sub)
+        src = os.path.join(sub, "to_delete.txt")
+        with open(src, "w") as f:
+            f.write("delete me")
+        sync_file_to_group(src, mirror_group)
+
+        deleted = delete_from_group(src, mirror_group)
+
+        assert len(deleted) == 3
+        for folder in mirror_folders:
+            assert not os.path.exists(os.path.join(folder, "subdir", "to_delete.txt"))
 
     def test_delete_nonexistent_file(self, mirror_group):
         deleted = delete_from_group("/nonexistent/file.txt", mirror_group)
