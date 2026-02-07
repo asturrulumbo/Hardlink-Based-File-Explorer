@@ -33,14 +33,33 @@ class MirrorGroup:
 DEFAULT_REGISTRY_FILENAME = "mirror_groups.json"
 
 
+def _default_registry_path() -> str:
+    """Return a stable path for the registry JSON file.
+
+    Uses the OS-appropriate user data directory so the file persists
+    across PyInstaller --onefile runs (where __file__ points to a
+    temporary extraction directory that changes every launch).
+    """
+    import platform
+    system = platform.system()
+    if system == "Windows":
+        base = os.environ.get("APPDATA", os.path.expanduser("~"))
+        data_dir = os.path.join(base, "HardlinkManager")
+    elif system == "Darwin":
+        data_dir = os.path.join(os.path.expanduser("~"),
+                                "Library", "Application Support", "HardlinkManager")
+    else:
+        xdg = os.environ.get("XDG_CONFIG_HOME", os.path.join(os.path.expanduser("~"), ".config"))
+        data_dir = os.path.join(xdg, "hardlink_manager")
+    return os.path.join(data_dir, DEFAULT_REGISTRY_FILENAME)
+
+
 class MirrorGroupRegistry:
     """Persistent registry of mirror groups, backed by a JSON file."""
 
     def __init__(self, path: Optional[str] = None):
         if path is None:
-            # Default: store next to the executable / in app directory
-            app_dir = os.path.dirname(os.path.abspath(__file__))
-            path = os.path.join(app_dir, "..", DEFAULT_REGISTRY_FILENAME)
+            path = _default_registry_path()
         self.path = os.path.abspath(path)
         self._groups: dict[str, MirrorGroup] = {}
         self.load()
@@ -179,3 +198,87 @@ class MirrorGroupRegistry:
     def is_folder_in_group(self, folder: str) -> bool:
         """Check if a folder belongs to any mirror group."""
         return self.find_group_for_folder(folder) is not None
+
+    def scan_for_mirrors(self, folders: list[str]) -> list["MirrorGroup"]:
+        """Scan folders and discover mirror groups from shared hardlinks.
+
+        Walks each folder recursively, collecting files by (dev, inode).
+        Two folders that share at least one hardlinked file are considered
+        mirrors of each other.  Connected components of the "shares a
+        hardlink" relation form mirror groups.
+
+        Groups that already exist in the registry (same set of folders)
+        are skipped.  Newly discovered groups are added to the registry.
+
+        Returns:
+            List of newly created MirrorGroup objects.
+        """
+        folders = [os.path.normpath(os.path.abspath(f))
+                   for f in folders if os.path.isdir(f)]
+        if len(folders) < 2:
+            return []
+
+        # Map (dev, inode) -> set of folder indices that contain the file
+        inode_to_folders: dict[tuple[int, int], set[int]] = {}
+
+        for idx, folder in enumerate(folders):
+            for dirpath, _dirnames, filenames in os.walk(folder):
+                for fname in filenames:
+                    full_path = os.path.join(dirpath, fname)
+                    try:
+                        st = os.stat(full_path)
+                        key = (st.st_dev, st.st_ino)
+                        if key not in inode_to_folders:
+                            inode_to_folders[key] = set()
+                        inode_to_folders[key].add(idx)
+                    except OSError:
+                        continue
+
+        # Build adjacency: which folders share at least one hardlink?
+        # Use union-find to group connected folders.
+        parent = list(range(len(folders)))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int):
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        for folder_indices in inode_to_folders.values():
+            if len(folder_indices) < 2:
+                continue
+            indices = list(folder_indices)
+            for i in range(1, len(indices)):
+                union(indices[0], indices[i])
+
+        # Collect groups (only those with 2+ folders)
+        components: dict[int, list[str]] = {}
+        for idx in range(len(folders)):
+            root = find(idx)
+            if root not in components:
+                components[root] = []
+            components[root].append(folders[idx])
+
+        # Determine existing folder sets to avoid duplicates
+        existing_sets: list[set[str]] = []
+        for group in self._groups.values():
+            norm = {os.path.normpath(os.path.abspath(f)) for f in group.folders}
+            existing_sets.append(norm)
+
+        new_groups = []
+        for component_folders in components.values():
+            if len(component_folders) < 2:
+                continue
+            folder_set = set(component_folders)
+            # Skip if already registered
+            if folder_set in existing_sets:
+                continue
+            group = self.create_group(folders=component_folders)
+            new_groups.append(group)
+
+        return new_groups

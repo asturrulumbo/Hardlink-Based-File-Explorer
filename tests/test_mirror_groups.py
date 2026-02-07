@@ -189,3 +189,86 @@ class TestRegistryQueries:
         registry.create_group(two_folders)
         assert registry.is_folder_in_group(two_folders[0]) is True
         assert registry.is_folder_in_group("/unknown") is False
+
+
+class TestScanForMirrors:
+    def test_discovers_mirror_from_hardlinks(self, registry, tmp_path):
+        a = tmp_path / "dir_a"
+        b = tmp_path / "dir_b"
+        a.mkdir()
+        b.mkdir()
+        # Create a file in dir_a and hardlink it into dir_b
+        src = a / "file.txt"
+        src.write_text("hello")
+        os.link(str(src), str(b / "file.txt"))
+
+        new_groups = registry.scan_for_mirrors([str(a), str(b)])
+        assert len(new_groups) == 1
+        folder_set = {os.path.normpath(f) for f in new_groups[0].folders}
+        assert os.path.normpath(str(a)) in folder_set
+        assert os.path.normpath(str(b)) in folder_set
+
+    def test_no_shared_hardlinks(self, registry, tmp_path):
+        a = tmp_path / "dir_a"
+        b = tmp_path / "dir_b"
+        a.mkdir()
+        b.mkdir()
+        (a / "file1.txt").write_text("aaa")
+        (b / "file2.txt").write_text("bbb")
+
+        new_groups = registry.scan_for_mirrors([str(a), str(b)])
+        assert len(new_groups) == 0
+
+    def test_skips_already_registered(self, registry, tmp_path):
+        a = tmp_path / "dir_a"
+        b = tmp_path / "dir_b"
+        a.mkdir()
+        b.mkdir()
+        src = a / "file.txt"
+        src.write_text("hello")
+        os.link(str(src), str(b / "file.txt"))
+
+        # Create the group manually first
+        registry.create_group([str(a), str(b)])
+        # Scan should find no NEW groups
+        new_groups = registry.scan_for_mirrors([str(a), str(b)])
+        assert len(new_groups) == 0
+
+    def test_discovers_multiple_groups(self, registry, tmp_path):
+        # Two independent pairs of mirrors
+        a1 = tmp_path / "pair1_a"
+        b1 = tmp_path / "pair1_b"
+        a2 = tmp_path / "pair2_a"
+        b2 = tmp_path / "pair2_b"
+        for d in [a1, b1, a2, b2]:
+            d.mkdir()
+        src1 = a1 / "f.txt"
+        src1.write_text("one")
+        os.link(str(src1), str(b1 / "f.txt"))
+        src2 = a2 / "g.txt"
+        src2.write_text("two")
+        os.link(str(src2), str(b2 / "g.txt"))
+
+        new_groups = registry.scan_for_mirrors(
+            [str(a1), str(b1), str(a2), str(b2)]
+        )
+        assert len(new_groups) == 2
+
+    def test_needs_at_least_two_folders(self, registry, tmp_path):
+        a = tmp_path / "only"
+        a.mkdir()
+        assert registry.scan_for_mirrors([str(a)]) == []
+
+    def test_discovers_recursive_hardlinks(self, registry, tmp_path):
+        a = tmp_path / "dir_a"
+        b = tmp_path / "dir_b"
+        sub_a = a / "sub"
+        sub_b = b / "sub"
+        sub_a.mkdir(parents=True)
+        sub_b.mkdir(parents=True)
+        src = sub_a / "deep.txt"
+        src.write_text("nested")
+        os.link(str(src), str(sub_b / "deep.txt"))
+
+        new_groups = registry.scan_for_mirrors([str(a), str(b)])
+        assert len(new_groups) == 1

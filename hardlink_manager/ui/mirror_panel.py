@@ -34,6 +34,8 @@ class MirrorGroupPanel(ttk.Frame):
         ttk.Button(toolbar, text="Delete", command=self._delete_group).pack(side=tk.LEFT, padx=2)
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
         ttk.Button(toolbar, text="Sync Now", command=self._sync_group).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Button(toolbar, text="Scan for Mirrors", command=self._scan_for_mirrors).pack(side=tk.LEFT, padx=2)
 
         # -- Group list --
         list_frame = ttk.LabelFrame(self, text="Mirror Groups", padding=5)
@@ -184,6 +186,56 @@ class MirrorGroupPanel(ttk.Frame):
             messagebox.showinfo("Sync Complete", msg, parent=self.winfo_toplevel())
         except Exception as e:
             messagebox.showerror("Sync Error", str(e), parent=self.winfo_toplevel())
+
+    def _scan_for_mirrors(self):
+        """Ask user for a parent folder, scan its subfolders for hardlink mirrors."""
+        parent_dir = filedialog.askdirectory(
+            parent=self.winfo_toplevel(),
+            title="Select a folder to scan for hardlink mirrors",
+        )
+        if not parent_dir:
+            return
+
+        # Collect immediate subdirectories
+        try:
+            subdirs = [
+                os.path.join(parent_dir, name)
+                for name in os.listdir(parent_dir)
+                if os.path.isdir(os.path.join(parent_dir, name))
+            ]
+        except OSError as e:
+            messagebox.showerror("Scan Error", str(e), parent=self.winfo_toplevel())
+            return
+
+        if len(subdirs) < 2:
+            messagebox.showinfo(
+                "Not Enough Folders",
+                "The selected folder needs at least 2 subfolders to scan.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+
+        self._set_status(f"Scanning {len(subdirs)} folders for hardlink mirrors...")
+        self.winfo_toplevel().update_idletasks()
+
+        new_groups = self.registry.scan_for_mirrors(subdirs)
+        if new_groups:
+            self.refresh_list()
+            self._notify_change(
+                f"Scan complete: found {len(new_groups)} new mirror group(s)."
+            )
+            messagebox.showinfo(
+                "Scan Complete",
+                f"Found {len(new_groups)} new mirror group(s).",
+                parent=self.winfo_toplevel(),
+            )
+        else:
+            self._set_status("Scan complete: no new mirror groups found.")
+            messagebox.showinfo(
+                "Scan Complete",
+                "No new hardlink mirror groups were found.",
+                parent=self.winfo_toplevel(),
+            )
 
     def _notify_change(self, msg: str):
         self._set_status(msg)
