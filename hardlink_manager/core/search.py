@@ -49,7 +49,9 @@ def intersection_search(
             if filename_pattern and filename_pattern.lower() not in entry.name.lower():
                 continue
             try:
-                st = entry.stat()
+                # Use os.stat() instead of entry.stat() because
+                # DirEntry.stat() on Windows doesn't populate st_ino
+                st = os.stat(entry.path)
                 key = (st.st_dev, st.st_ino)
                 if key not in inode_map:
                     inode_map[key] = {}

@@ -3,6 +3,8 @@
 import os
 import pytest
 
+from unittest.mock import patch
+
 from hardlink_manager.utils.filesystem import (
     copy_item,
     delete_item,
@@ -12,6 +14,8 @@ from hardlink_manager.utils.filesystem import (
     is_regular_file,
     is_same_volume,
     move_item,
+    reveal_in_explorer,
+    sanitize_filename,
 )
 
 
@@ -188,6 +192,77 @@ class TestMoveItem:
         (dest_dir / "source.txt").write_text("existing")
         with pytest.raises(FileExistsError):
             move_item(str(src), str(dest_dir))
+
+
+class TestSanitizeFilename:
+    def test_plain_ascii(self):
+        assert sanitize_filename("hello.txt") == "hello.txt"
+
+    def test_arabic_preserved(self):
+        assert sanitize_filename("احمد هاشم") == "احمد هاشم"
+
+    def test_turkish_preserved(self):
+        assert sanitize_filename("Ahmet Haşim") == "Ahmet Haşim"
+
+    def test_strips_rtl_mark(self):
+        # U+200F RIGHT-TO-LEFT MARK
+        assert sanitize_filename("test\u200fname") == "testname"
+
+    def test_strips_ltr_mark(self):
+        # U+200E LEFT-TO-RIGHT MARK
+        assert sanitize_filename("test\u200ename") == "testname"
+
+    def test_strips_bidi_embedding(self):
+        # U+202B RIGHT-TO-LEFT EMBEDDING, U+202C POP DIRECTIONAL FORMATTING
+        assert sanitize_filename("\u202bاحمد\u202c") == "احمد"
+
+    def test_strips_zero_width_joiner(self):
+        assert sanitize_filename("a\u200db") == "ab"
+
+    def test_strips_bom(self):
+        assert sanitize_filename("\ufefftest") == "test"
+
+    def test_removes_forbidden_chars(self):
+        assert sanitize_filename('file<>:"/\\|?*name') == "filename"
+
+    def test_strips_trailing_dots(self):
+        assert sanitize_filename("folder...") == "folder"
+
+    def test_strips_trailing_spaces(self):
+        assert sanitize_filename("folder   ") == "folder"
+
+    def test_empty_after_sanitize(self):
+        assert sanitize_filename("\u200f\u200e") == ""
+
+    def test_mixed_arabic_with_control_chars(self):
+        # Simulates what tkinter might produce with Arabic input
+        assert sanitize_filename("\u200fاحمد هاشم\u200f") == "احمد هاشم"
+
+
+class TestRevealInExplorer:
+    @patch("hardlink_manager.utils.filesystem.platform.system", return_value="Linux")
+    @patch("hardlink_manager.utils.filesystem._popen_safe")
+    def test_linux_file(self, mock_popen, mock_sys, tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_text("hello")
+        reveal_in_explorer(str(f))
+        mock_popen.assert_called_once_with(["xdg-open", str(tmp_path)])
+
+    @patch("hardlink_manager.utils.filesystem.platform.system", return_value="Linux")
+    @patch("hardlink_manager.utils.filesystem._popen_safe")
+    def test_linux_folder(self, mock_popen, mock_sys, tmp_path):
+        d = tmp_path / "subdir"
+        d.mkdir()
+        reveal_in_explorer(str(d))
+        mock_popen.assert_called_once_with(["xdg-open", str(d)])
+
+    @patch("hardlink_manager.utils.filesystem.platform.system", return_value="Darwin")
+    @patch("hardlink_manager.utils.filesystem._popen_safe")
+    def test_macos(self, mock_popen, mock_sys, tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_text("hello")
+        reveal_in_explorer(str(f))
+        mock_popen.assert_called_once_with(["open", "-R", str(f)])
 
 
 class TestDeleteItem:

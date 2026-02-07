@@ -3,6 +3,7 @@
 import os
 import platform
 import stat
+import unicodedata
 
 
 def get_inode(path: str) -> int:
@@ -59,6 +60,27 @@ def is_same_volume(path1: str, path2: str) -> bool:
         return stat1.st_dev == stat2.st_dev
 
 
+def sanitize_filename(name: str) -> str:
+    """Remove characters that are invalid in Windows/NTFS filenames.
+
+    Strips invisible Unicode control and formatting characters (e.g. RTL marks,
+    zero-width joiners) that tkinter input widgets may inject, as well as the
+    standard Windows-forbidden characters.
+    """
+    # Strip Unicode control (Cc) and formatting (Cf) characters —
+    # includes bidi marks (U+200E/F, U+202A-E), BOM (U+FEFF), ZWJ/ZWNJ, etc.
+    cleaned = "".join(
+        ch for ch in name
+        if unicodedata.category(ch) not in ("Cc", "Cf")
+    )
+    # Remove characters forbidden in Windows filenames
+    forbidden = '<>:"/\\|?*'
+    cleaned = "".join(ch for ch in cleaned if ch not in forbidden)
+    # Windows doesn't allow trailing dots or spaces in names
+    cleaned = cleaned.strip().rstrip(".")
+    return cleaned
+
+
 def is_regular_file(path: str) -> bool:
     """Check if a path points to a regular file (not a directory/symlink)."""
     return os.path.isfile(path) and not os.path.islink(path)
@@ -77,17 +99,42 @@ def open_file(path: str) -> None:
         subprocess.Popen(["xdg-open", path])
 
 
-def open_file_with(path: str, program: str) -> None:
-    """Open a file with a specific program."""
+def _popen_safe(args: list[str]) -> None:
+    """Launch a subprocess safely, even in PyInstaller --noconsole mode."""
+    import subprocess
+
+    kwargs: dict = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if platform.system() == "Windows":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        kwargs["startupinfo"] = si
+    subprocess.Popen(args, **kwargs)
+
+
+def reveal_in_explorer(path: str) -> None:
+    """Open the containing folder in the system file manager and select the item."""
     import subprocess
 
     system = platform.system()
+    abspath = os.path.abspath(path)
+
     if system == "Windows":
-        subprocess.Popen([program, path])
+        if os.path.isdir(abspath):
+            # Open the folder itself
+            os.startfile(abspath)
+        else:
+            # Open Explorer with the file selected
+            subprocess.Popen(["explorer", "/select,", abspath])
     elif system == "Darwin":
-        subprocess.Popen(["open", "-a", program, path])
+        _popen_safe(["open", "-R", abspath])
     else:
-        subprocess.Popen([program, path])
+        # Linux: open the containing directory
+        folder = abspath if os.path.isdir(abspath) else os.path.dirname(abspath)
+        _popen_safe(["xdg-open", folder])
 
 
 def copy_item(src: str, dest_dir: str, new_name: str = "") -> str:

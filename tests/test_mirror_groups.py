@@ -172,6 +172,19 @@ class TestRegistryQueries:
         registry.create_group(two_folders)
         assert registry.find_group_for_folder("/some/random/path") is None
 
+    def test_find_group_for_path_in_subfolder(self, registry, two_folders):
+        group = registry.create_group(two_folders)
+        sub = os.path.join(two_folders[0], "subdir", "file.txt")
+        result = registry.find_group_for_path(sub)
+        assert result is not None
+        found_group, root = result
+        assert found_group.id == group.id
+        assert root == os.path.normpath(os.path.abspath(two_folders[0]))
+
+    def test_find_group_for_path_not_found(self, registry, two_folders):
+        registry.create_group(two_folders)
+        assert registry.find_group_for_path("/some/random/path") is None
+
     def test_is_folder_in_group(self, registry, two_folders):
         registry.create_group(two_folders)
         assert registry.is_folder_in_group(two_folders[0]) is True

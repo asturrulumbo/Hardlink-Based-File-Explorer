@@ -8,8 +8,22 @@ from hardlink_manager.core.mirror_groups import MirrorGroup
 from hardlink_manager.utils.filesystem import get_inode
 
 
+def _find_root_folder(file_path: str, group: MirrorGroup) -> Optional[str]:
+    """Return which of the group's folders contains file_path (or a parent of it)."""
+    file_path = os.path.normpath(os.path.abspath(file_path))
+    for folder in group.folders:
+        norm = os.path.normpath(os.path.abspath(folder))
+        if file_path == norm or file_path.startswith(norm + os.sep):
+            return norm
+    return None
+
+
 def sync_file_to_group(source_path: str, group: MirrorGroup) -> list[str]:
     """Create hardlinks for a file in all other folders of the mirror group.
+
+    Handles files in subdirectories by computing the relative path from the
+    group root folder and replicating the same relative structure in every
+    other group folder.
 
     Args:
         source_path: Path to the file that was added.
@@ -18,19 +32,24 @@ def sync_file_to_group(source_path: str, group: MirrorGroup) -> list[str]:
     Returns:
         List of paths where new hardlinks were created.
     """
-    source_path = os.path.abspath(source_path)
-    source_dir = os.path.dirname(source_path)
-    filename = os.path.basename(source_path)
+    source_path = os.path.normpath(os.path.abspath(source_path))
+    source_root = _find_root_folder(source_path, group)
+    if source_root is None:
+        return []
+
+    rel_path = os.path.relpath(source_path, source_root)
     source_inode = get_inode(source_path)
     source_dev = os.stat(source_path).st_dev
 
     created = []
     for folder in group.folders:
-        folder = os.path.abspath(folder)
-        if os.path.normpath(folder) == os.path.normpath(source_dir):
+        folder = os.path.normpath(os.path.abspath(folder))
+        if folder == source_root:
             continue
 
-        dest_path = os.path.join(folder, filename)
+        dest_path = os.path.join(folder, rel_path)
+        dest_dir = os.path.dirname(dest_path)
+        filename = os.path.basename(dest_path)
 
         # Already exists — check if same inode (already linked)
         if os.path.exists(dest_path):
@@ -42,11 +61,11 @@ def sync_file_to_group(source_path: str, group: MirrorGroup) -> list[str]:
                 pass
             continue  # Different file with same name, skip
 
-        # Create the destination directory if it doesn't exist
-        os.makedirs(folder, exist_ok=True)
+        # Create intermediate directories as needed
+        os.makedirs(dest_dir, exist_ok=True)
 
         try:
-            create_hardlink(source_path, folder, filename)
+            create_hardlink(source_path, dest_dir, filename)
             created.append(dest_path)
         except (OSError, ValueError, FileExistsError):
             continue
@@ -55,10 +74,11 @@ def sync_file_to_group(source_path: str, group: MirrorGroup) -> list[str]:
 
 
 def sync_group(group: MirrorGroup) -> dict[str, list[str]]:
-    """Full sync of a mirror group: ensure all folders have the same files.
+    """Full recursive sync of a mirror group.
 
-    Collects all unique files (by inode) across all folders, then ensures
-    every file exists in every folder via hardlinks.
+    Walks all folders recursively, collecting unique files by (dev, inode).
+    Then ensures every file exists at the same relative path in every folder
+    via hardlinks, creating subdirectories as needed.
 
     Returns:
         Dict mapping each created hardlink path to its source path.
@@ -66,33 +86,33 @@ def sync_group(group: MirrorGroup) -> dict[str, list[str]]:
     if len(group.folders) < 2:
         return {}
 
-    # Collect all unique files by (dev, inode) -> (source_path, filename)
+    # Collect all unique files by (dev, inode) -> (source_path, relative_path)
     unique_files: dict[tuple[int, int], tuple[str, str]] = {}
 
     for folder in group.folders:
-        folder = os.path.abspath(folder)
+        folder = os.path.normpath(os.path.abspath(folder))
         if not os.path.isdir(folder):
             continue
-        try:
-            for entry in os.scandir(folder):
-                if not entry.is_file(follow_symlinks=False):
-                    continue
+        for dirpath, _dirnames, filenames in os.walk(folder):
+            for fname in filenames:
+                full_path = os.path.join(dirpath, fname)
                 try:
-                    st = entry.stat()
+                    # Use os.stat() — DirEntry.stat() on Windows doesn't
+                    # populate st_ino
+                    st = os.stat(full_path)
                     key = (st.st_dev, st.st_ino)
                     if key not in unique_files:
-                        unique_files[key] = (entry.path, entry.name)
+                        rel = os.path.relpath(full_path, folder)
+                        unique_files[key] = (full_path, rel)
                 except OSError:
                     continue
-        except OSError:
-            continue
 
-    # For each unique file, ensure it exists in all folders
+    # For each unique file, ensure it exists at the same relative path in all folders
     created = {}
-    for (dev, inode), (source_path, filename) in unique_files.items():
+    for (dev, inode), (source_path, rel_path) in unique_files.items():
         for folder in group.folders:
-            folder = os.path.abspath(folder)
-            dest_path = os.path.join(folder, filename)
+            folder = os.path.normpath(os.path.abspath(folder))
+            dest_path = os.path.join(folder, rel_path)
 
             if os.path.exists(dest_path):
                 try:
@@ -103,9 +123,10 @@ def sync_group(group: MirrorGroup) -> dict[str, list[str]]:
                     pass
                 continue  # Different file with same name, skip
 
-            os.makedirs(folder, exist_ok=True)
+            dest_dir = os.path.dirname(dest_path)
+            os.makedirs(dest_dir, exist_ok=True)
             try:
-                create_hardlink(source_path, folder, filename)
+                create_hardlink(source_path, dest_dir, os.path.basename(rel_path))
                 created[dest_path] = source_path
             except (OSError, ValueError, FileExistsError):
                 continue
@@ -116,7 +137,8 @@ def sync_group(group: MirrorGroup) -> dict[str, list[str]]:
 def delete_from_group(file_path: str, group: MirrorGroup) -> list[str]:
     """Delete a file from ALL folders in a mirror group.
 
-    Finds all hardlinks to the file within the group's folders and removes them.
+    Finds the file's relative path within its group folder, then deletes
+    the matching file (by inode) at the same relative path in all group folders.
 
     Args:
         file_path: Path to the file being deleted.
@@ -125,19 +147,23 @@ def delete_from_group(file_path: str, group: MirrorGroup) -> list[str]:
     Returns:
         List of paths that were deleted.
     """
-    file_path = os.path.abspath(file_path)
+    file_path = os.path.normpath(os.path.abspath(file_path))
+    root_folder = _find_root_folder(file_path, group)
+    if root_folder is None:
+        return []
+
     try:
         target_inode = get_inode(file_path)
         target_dev = os.stat(file_path).st_dev
     except OSError:
         return []
 
-    filename = os.path.basename(file_path)
+    rel_path = os.path.relpath(file_path, root_folder)
     deleted = []
 
     for folder in group.folders:
-        folder = os.path.abspath(folder)
-        candidate = os.path.join(folder, filename)
+        folder = os.path.normpath(os.path.abspath(folder))
+        candidate = os.path.join(folder, rel_path)
         if not os.path.exists(candidate):
             continue
         try:

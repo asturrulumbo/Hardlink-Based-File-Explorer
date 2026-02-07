@@ -208,7 +208,9 @@ class FileListPanel(ttk.Frame):
                             "is_dir": True,
                         })
                     elif entry.is_file(follow_symlinks=False):
-                        st = entry.stat()
+                        # Use os.stat() instead of entry.stat() because
+                        # DirEntry.stat() on Windows doesn't populate st_nlink
+                        st = os.stat(entry.path)
                         file_entries.append({
                             "name": entry.name,
                             "type": "File",

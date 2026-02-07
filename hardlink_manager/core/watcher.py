@@ -33,11 +33,13 @@ class _DebouncedHandler(FileSystemEventHandler):
             return
 
         src_path = os.path.abspath(event.src_path)
-        folder = os.path.dirname(src_path)
 
-        # Check if this folder belongs to a sync-enabled mirror group
-        group = self.registry.find_group_for_folder(folder)
-        if group is None or not group.sync_enabled:
+        # Check if this path is inside a sync-enabled mirror group folder
+        result = self.registry.find_group_for_path(src_path)
+        if result is None:
+            return
+        group, _root_folder = result
+        if not group.sync_enabled:
             return
 
         # Debounce: schedule the sync
@@ -76,9 +78,11 @@ class _DebouncedHandler(FileSystemEventHandler):
         for path in to_sync:
             if not os.path.exists(path):
                 continue
-            folder = os.path.dirname(path)
-            group = self.registry.find_group_for_folder(folder)
-            if group is None or not group.sync_enabled:
+            result = self.registry.find_group_for_path(path)
+            if result is None:
+                continue
+            group, _root_folder = result
+            if not group.sync_enabled:
                 continue
             try:
                 created = sync_file_to_group(path, group)
@@ -118,7 +122,7 @@ class MirrorGroupWatcher:
             for folder in group.folders:
                 folder = os.path.abspath(folder)
                 if os.path.isdir(folder) and folder not in self._watched_paths:
-                    self._observer.schedule(self._handler, folder, recursive=False)
+                    self._observer.schedule(self._handler, folder, recursive=True)
                     self._watched_paths.add(folder)
 
         self._observer.daemon = True
