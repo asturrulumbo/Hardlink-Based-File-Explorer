@@ -333,8 +333,8 @@ class HardlinkManagerApp:
         group = self.registry.create_group(folders=[source, dest])
 
         try:
-            created = sync_group(group)
-            n = len(created)
+            sr = sync_group(group, registry_path=self.registry.path)
+            n = len(sr.created)
             self._set_status(f"Mirror created: {dest}  ({n} file(s) hardlinked)")
         except Exception as e:
             self._set_status(f"Mirror created at {dest} (sync error: {e})")

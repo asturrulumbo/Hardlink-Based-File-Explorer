@@ -7,7 +7,7 @@ from tkinter import ttk, filedialog, messagebox
 from typing import Callable, Optional
 
 from hardlink_manager.core.mirror_groups import MirrorGroup, MirrorGroupRegistry
-from hardlink_manager.core.sync import sync_group
+from hardlink_manager.core.sync import sync_group, SyncResult
 
 
 class MirrorGroupPanel(ttk.Frame):
@@ -182,9 +182,14 @@ class MirrorGroupPanel(ttk.Frame):
         if group is None:
             return
         try:
-            created = sync_group(group)
-            if created:
-                msg = f"Synced '{group.auto_name()}': {len(created)} hardlink(s) created."
+            sr = sync_group(group, registry_path=self.registry.path)
+            parts: list[str] = []
+            if sr.created:
+                parts.append(f"{len(sr.created)} hardlink(s) created")
+            if sr.deleted:
+                parts.append(f"{len(sr.deleted)} file(s) deleted")
+            if parts:
+                msg = f"Synced '{group.auto_name()}': {', '.join(parts)}."
             else:
                 msg = f"'{group.auto_name()}' is already in sync."
             self._set_status(msg)

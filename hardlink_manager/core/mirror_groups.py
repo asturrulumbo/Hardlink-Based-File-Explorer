@@ -48,6 +48,47 @@ def remove_mirror_marker(folder: str) -> None:
         pass
 
 
+# ---------------------------------------------------------------------------
+# Sync manifest – tracks which relative paths have been synced for a group
+# so that deletions can be detected on the next sync.
+# ---------------------------------------------------------------------------
+
+MANIFEST_PREFIX = "manifest_"
+
+
+def _manifest_path(registry_path: str, group_id: str) -> str:
+    """Return the path to the manifest file for a given group."""
+    data_dir = os.path.dirname(registry_path)
+    return os.path.join(data_dir, f"{MANIFEST_PREFIX}{group_id}.json")
+
+
+def load_sync_manifest(registry_path: str, group_id: str) -> set[str]:
+    """Load the set of synced relative paths for a group."""
+    path = _manifest_path(registry_path, group_id)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return set(data.get("synced_paths", []))
+    except (OSError, json.JSONDecodeError):
+        return set()
+
+
+def save_sync_manifest(registry_path: str, group_id: str, paths: set[str]) -> None:
+    """Save the set of synced relative paths for a group."""
+    path = _manifest_path(registry_path, group_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"synced_paths": sorted(paths)}, f, ensure_ascii=False)
+
+
+def delete_sync_manifest(registry_path: str, group_id: str) -> None:
+    """Delete the manifest file for a group (e.g. when the group is deleted)."""
+    try:
+        os.remove(_manifest_path(registry_path, group_id))
+    except OSError:
+        pass
+
+
 @dataclass
 class MirrorGroup:
     """A mirror group: a set of folders kept in sync via hardlinks."""
@@ -189,6 +230,7 @@ class MirrorGroupRegistry:
                 remove_mirror_marker(f)
             del self._groups[group_id]
             self.save()
+            delete_sync_manifest(self.path, group_id)
             return True
         return False
 

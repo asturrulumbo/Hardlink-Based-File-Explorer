@@ -124,11 +124,11 @@ class TestSyncGroup:
         with open(os.path.join(mirror_folders[1], "b.txt"), "w") as f:
             f.write("bbb")
 
-        created = sync_group(mirror_group)
+        sr = sync_group(mirror_group)
 
         # a.txt should be synced to mirror_b and mirror_c
         # b.txt should be synced to mirror_a and mirror_c
-        assert len(created) == 4
+        assert len(sr.created) == 4
 
         # All folders should have both files
         for folder in mirror_folders:
@@ -141,16 +141,17 @@ class TestSyncGroup:
 
         sync_group(mirror_group)
         # Second sync should produce no new links
-        created = sync_group(mirror_group)
-        assert len(created) == 0
+        sr = sync_group(mirror_group)
+        assert len(sr.created) == 0
 
     def test_sync_empty_group(self, mirror_group):
-        created = sync_group(mirror_group)
-        assert created == {}
+        sr = sync_group(mirror_group)
+        assert sr.created == {}
 
     def test_sync_group_less_than_two_folders(self):
         group = MirrorGroup(name="One", folders=["/tmp/one"])
-        assert sync_group(group) == {}
+        sr = sync_group(group)
+        assert sr.created == {}
 
     def test_sync_preserves_inodes(self, mirror_group, mirror_folders):
         src = os.path.join(mirror_folders[0], "linked.txt")
@@ -162,7 +163,6 @@ class TestSyncGroup:
         src_inode = get_inode(src)
         for folder in mirror_folders[1:]:
             assert get_inode(os.path.join(folder, "linked.txt")) == src_inode
-
 
     def test_sync_group_recursive(self, mirror_group, mirror_folders):
         # Create files in subdirectories
@@ -176,11 +176,11 @@ class TestSyncGroup:
         with open(os.path.join(sub_b, "photo.txt"), "w") as f:
             f.write("photo")
 
-        created = sync_group(mirror_group)
+        sr = sync_group(mirror_group)
 
         # docs/readme.txt synced to mirror_b and mirror_c
         # images/photo.txt synced to mirror_a and mirror_c
-        assert len(created) == 4
+        assert len(sr.created) == 4
 
         for folder in mirror_folders:
             assert os.path.exists(os.path.join(folder, "docs", "readme.txt"))
@@ -199,6 +199,47 @@ class TestSyncGroup:
             dest = os.path.join(folder, "a", "b", "c", "file.txt")
             assert os.path.exists(dest)
             assert get_inode(dest) == get_inode(src)
+
+    def test_sync_detects_deletion(self, mirror_group, mirror_folders):
+        """Deleting a file from one folder should propagate to all others."""
+        src = os.path.join(mirror_folders[0], "removeme.txt")
+        with open(src, "w") as f:
+            f.write("will be deleted")
+
+        # First sync: creates hardlinks in all folders
+        sync_group(mirror_group)
+        for folder in mirror_folders:
+            assert os.path.exists(os.path.join(folder, "removeme.txt"))
+
+        # User deletes the file from folder_b
+        os.unlink(os.path.join(mirror_folders[1], "removeme.txt"))
+
+        # Second sync: should detect deletion and propagate
+        sr = sync_group(mirror_group)
+        assert len(sr.deleted) >= 2  # deleted from folder_a and folder_c
+        for folder in mirror_folders:
+            assert not os.path.exists(os.path.join(folder, "removeme.txt"))
+
+    def test_sync_deletion_cleans_empty_dirs(self, mirror_group, mirror_folders):
+        """Deleting the last file in a subdirectory should prune the empty dir."""
+        sub = os.path.join(mirror_folders[0], "subdir")
+        os.makedirs(sub)
+        src = os.path.join(sub, "only.txt")
+        with open(src, "w") as f:
+            f.write("only file")
+
+        sync_group(mirror_group)
+        for folder in mirror_folders:
+            assert os.path.isdir(os.path.join(folder, "subdir"))
+
+        # Delete from one folder
+        os.unlink(os.path.join(mirror_folders[2], "subdir", "only.txt"))
+
+        sr = sync_group(mirror_group)
+        assert len(sr.deleted) >= 2
+        # Empty subdir should be pruned in all folders
+        for folder in mirror_folders:
+            assert not os.path.isdir(os.path.join(folder, "subdir"))
 
 
 class TestDeleteFromGroup:
