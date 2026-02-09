@@ -4,7 +4,7 @@ import os
 from typing import Optional
 
 from hardlink_manager.core.hardlink_ops import create_hardlink
-from hardlink_manager.core.mirror_groups import MirrorGroup
+from hardlink_manager.core.mirror_groups import MIRROR_MARKER, MirrorGroup
 from hardlink_manager.utils.filesystem import get_inode
 
 
@@ -33,6 +33,8 @@ def sync_file_to_group(source_path: str, group: MirrorGroup) -> list[str]:
         List of paths where new hardlinks were created.
     """
     source_path = os.path.normpath(os.path.abspath(source_path))
+    if os.path.basename(source_path) == MIRROR_MARKER:
+        return []
     source_root = _find_root_folder(source_path, group)
     if source_root is None:
         return []
@@ -95,6 +97,8 @@ def sync_group(group: MirrorGroup) -> dict[str, list[str]]:
             continue
         for dirpath, _dirnames, filenames in os.walk(folder):
             for fname in filenames:
+                if fname == MIRROR_MARKER:
+                    continue
                 full_path = os.path.join(dirpath, fname)
                 try:
                     # Use os.stat() — DirEntry.stat() on Windows doesn't
