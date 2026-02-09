@@ -2,10 +2,50 @@
 
 import json
 import os
+import platform
 import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Optional
+
+
+MIRROR_MARKER = ".hardlink_mirror"
+"""Hidden file placed in each folder that belongs to a confirmed mirror group."""
+
+
+def write_mirror_marker(folder: str, group_id: str) -> None:
+    """Write a hidden marker file into *folder* to tag it as a mirror."""
+    marker = os.path.join(folder, MIRROR_MARKER)
+    try:
+        with open(marker, "w", encoding="utf-8") as f:
+            json.dump({"group_id": group_id}, f)
+        if platform.system() == "Windows":
+            import ctypes
+            ctypes.windll.kernel32.SetFileAttributesW(marker, 0x02)
+    except OSError:
+        pass
+
+
+def has_mirror_marker(folder: str) -> bool:
+    """Return True if *folder* contains a mirror marker file."""
+    return os.path.isfile(os.path.join(folder, MIRROR_MARKER))
+
+
+def read_mirror_marker(folder: str) -> Optional[str]:
+    """Return the group-id stored in the marker, or None."""
+    try:
+        with open(os.path.join(folder, MIRROR_MARKER), "r", encoding="utf-8") as f:
+            return json.load(f).get("group_id")
+    except (OSError, json.JSONDecodeError, KeyError):
+        return None
+
+
+def remove_mirror_marker(folder: str) -> None:
+    """Remove the marker file from *folder* if it exists."""
+    try:
+        os.remove(os.path.join(folder, MIRROR_MARKER))
+    except OSError:
+        pass
 
 
 @dataclass
@@ -107,6 +147,8 @@ class MirrorGroupRegistry:
             group.name = group.auto_name()
         self._groups[group.id] = group
         self.save()
+        for f in group.folders:
+            write_mirror_marker(f, group.id)
         return group
 
     def get_group(self, group_id: str) -> Optional[MirrorGroup]:
@@ -125,9 +167,14 @@ class MirrorGroupRegistry:
         if name is not None:
             group.name = name
         if folders is not None:
+            old_set = set(group.folders)
+            new_set = set(folders)
+            for removed in old_set - new_set:
+                remove_mirror_marker(removed)
             group.folders = folders
-            # Auto-update name from folder names
             group.name = group.auto_name()
+            for added in new_set - old_set:
+                write_mirror_marker(added, group_id)
         if sync_enabled is not None:
             group.sync_enabled = sync_enabled
         group.touch()
@@ -136,7 +183,10 @@ class MirrorGroupRegistry:
 
     def delete_group(self, group_id: str) -> bool:
         """Delete a mirror group and save. Returns True if it existed."""
-        if group_id in self._groups:
+        group = self._groups.get(group_id)
+        if group is not None:
+            for f in group.folders:
+                remove_mirror_marker(f)
             del self._groups[group_id]
             self.save()
             return True
@@ -153,6 +203,7 @@ class MirrorGroupRegistry:
             group.name = group.auto_name()
             group.touch()
             self.save()
+            write_mirror_marker(folder, group_id)
         return True
 
     def remove_folder_from_group(self, group_id: str, folder: str) -> bool:
@@ -166,6 +217,7 @@ class MirrorGroupRegistry:
             group.name = group.auto_name()
             group.touch()
             self.save()
+            remove_mirror_marker(folder)
             return True
         return False
 
@@ -199,35 +251,35 @@ class MirrorGroupRegistry:
         """Check if a folder belongs to any mirror group."""
         return self.find_group_for_folder(folder) is not None
 
-    def scan_content_mirrors(self, root_folders: list[str],
-                             progress_callback: Optional[
-                                 "Callable[[int, int], None]"] = None,
-                             ) -> list["MirrorGroup"]:
+    def scan_content_mirrors(
+        self,
+        root_folders: list[str],
+        progress_callback: Optional["Callable[[int, int], None]"] = None,
+    ) -> tuple[list[list[str]], list[list[str]]]:
         """Scan folders for content-based mirrors.
 
         Recursively walks each root folder and all its subfolders.
         Computes a content fingerprint for each directory based on the
-        SHA-256 hashes of all contained files, structured by directory
-        hierarchy but ignoring file and folder names.
-
-        Two folders are considered mirrors if they have identical
-        fingerprints -- same file contents in the same tree structure,
-        regardless of the names used for files and folders.
-
-        Args:
-            root_folders: Directories to scan.
-            progress_callback: Optional ``fn(dirs_done, files_hashed)``
-                called periodically so the UI can show progress.
+        SHA-256 hashes of all contained files (excluding the
+        ``.hardlink_mirror`` marker), structured by directory hierarchy
+        but ignoring file and folder names.
 
         Returns:
-            List of newly created MirrorGroup objects.
+            A pair ``(auto_confirmed, candidates)``.
+
+            *auto_confirmed* – folder lists where **every** folder already
+            carries a ``.hardlink_mirror`` marker (previously approved by
+            the user).  The caller can create groups for these without
+            asking.
+
+            *candidates* – folder lists that need manual review.
         """
         import hashlib
 
         root_folders = [os.path.normpath(os.path.abspath(f))
                         for f in root_folders if os.path.isdir(f)]
         if not root_folders:
-            return []
+            return [], []
 
         fp_cache: dict[str, str | None] = {}
         _stats = {"dirs": 0, "files": 0}
@@ -237,7 +289,6 @@ class MirrorGroupRegistry:
                 progress_callback(_stats["dirs"], _stats["files"])
 
         def _hash_file(filepath: str) -> str:
-            """Return SHA-256 hex digest of a file's contents."""
             h = hashlib.sha256()
             with open(filepath, 'rb') as f:
                 for chunk in iter(lambda: f.read(65536), b''):
@@ -248,12 +299,6 @@ class MirrorGroupRegistry:
             return h.hexdigest()
 
         def _dir_fingerprint(dirpath: str) -> str | None:
-            """Compute a content-based fingerprint for a directory tree.
-
-            The fingerprint is built from sorted file-content hashes
-            at this level and sorted child-directory fingerprints,
-            so names are irrelevant but tree structure is preserved.
-            """
             dirpath = os.path.normpath(dirpath)
             if dirpath in fp_cache:
                 return fp_cache[dirpath]
@@ -270,6 +315,9 @@ class MirrorGroupRegistry:
             for entry in entries:
                 try:
                     if entry.is_file(follow_symlinks=False):
+                        # Skip the marker file so it never affects the fingerprint
+                        if entry.name == MIRROR_MARKER:
+                            continue
                         file_fps.append(_hash_file(entry.path))
                     elif entry.is_dir(follow_symlinks=False):
                         cfp = _dir_fingerprint(entry.path)
@@ -294,10 +342,9 @@ class MirrorGroupRegistry:
                 _report()
             return combined
 
-        # Compute fingerprints starting from each root
         for root in root_folders:
             _dir_fingerprint(root)
-        _report()  # final progress update
+        _report()
 
         # Group directories by fingerprint
         fp_groups: dict[str, list[str]] = {}
@@ -305,17 +352,19 @@ class MirrorGroupRegistry:
             if fp is not None:
                 fp_groups.setdefault(fp, []).append(dirpath)
 
-        # Determine existing folder sets to avoid duplicates
+        # Existing folder sets – skip already-registered groups
         existing_sets: list[set[str]] = []
         for group in self._groups.values():
             norm = {os.path.normpath(os.path.abspath(f)) for f in group.folders}
             existing_sets.append(norm)
 
-        new_groups: list[MirrorGroup] = []
+        auto_confirmed: list[list[str]] = []
+        candidates: list[list[str]] = []
+
         for folders in fp_groups.values():
             if len(folders) < 2:
                 continue
-            # Remove ancestor directories when a descendant is also in the group
+            # Remove ancestor directories
             filtered = [
                 f for f in folders
                 if not any(
@@ -325,13 +374,15 @@ class MirrorGroupRegistry:
             ]
             if len(filtered) < 2:
                 continue
-            folder_set = set(filtered)
-            if folder_set in existing_sets:
+            if set(filtered) in existing_sets:
                 continue
-            group = self.create_group(folders=filtered)
-            new_groups.append(group)
+            # Separate: all marked → auto, otherwise → candidate
+            if all(has_mirror_marker(f) for f in filtered):
+                auto_confirmed.append(filtered)
+            else:
+                candidates.append(filtered)
 
-        return new_groups
+        return auto_confirmed, candidates
 
     def scan_for_mirrors(self, folders: list[str]) -> list["MirrorGroup"]:
         """Scan folders and discover mirror groups from shared hardlinks.

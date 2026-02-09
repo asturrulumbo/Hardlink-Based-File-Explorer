@@ -222,7 +222,8 @@ class MirrorGroupPanel(ttk.Frame):
         self._set_status("Scanning for content mirrors...")
 
         # Shared state between the worker thread and the UI
-        self._scan_result: list[MirrorGroup] | None = None
+        self._scan_auto: list[list[str]] = []
+        self._scan_candidates: list[list[str]] = []
         self._scan_error: str | None = None
         self._scan_progress = ""
 
@@ -234,9 +235,11 @@ class MirrorGroupPanel(ttk.Frame):
                 )
 
             try:
-                self._scan_result = self.registry.scan_content_mirrors(
+                auto, cands = self.registry.scan_content_mirrors(
                     root_folders, progress_callback=_on_progress,
                 )
+                self._scan_auto = auto
+                self._scan_candidates = cands
             except Exception as e:
                 self._scan_error = str(e)
 
@@ -247,13 +250,11 @@ class MirrorGroupPanel(ttk.Frame):
     def _poll_scan(self):
         """Check whether the background scan thread has finished."""
         if self._scan_thread is not None and self._scan_thread.is_alive():
-            # Still running – update status bar and check again soon
             if self._scan_progress:
                 self._set_status(self._scan_progress)
             self.after(200, self._poll_scan)
             return
 
-        # Thread finished – re-enable button and show results
         self._scan_btn.configure(state=tk.NORMAL)
         self._scan_thread = None
 
@@ -265,24 +266,41 @@ class MirrorGroupPanel(ttk.Frame):
             )
             return
 
-        new_groups = self._scan_result or []
-        if new_groups:
-            self.refresh_list()
-            self._notify_change(
-                f"Scan complete: found {len(new_groups)} new mirror group(s)."
-            )
-            messagebox.showinfo(
-                "Scan Complete",
-                f"Found {len(new_groups)} new content-mirror group(s).",
-                parent=self.winfo_toplevel(),
-            )
-        else:
+        auto = self._scan_auto
+        candidates = self._scan_candidates
+
+        # Auto-confirm groups whose folders already carry markers
+        for folders in auto:
+            self.registry.create_group(folders=folders)
+
+        # Nothing found at all
+        if not auto and not candidates:
             self._set_status("Scan complete: no new content mirrors found.")
             messagebox.showinfo(
                 "Scan Complete",
                 "No new content-mirror groups were found.",
                 parent=self.winfo_toplevel(),
             )
+            return
+
+        # Show review dialog for unconfirmed candidates
+        if candidates:
+            dlg = ScanReviewDialog(self.winfo_toplevel(), candidates)
+            self.winfo_toplevel().wait_window(dlg)
+            for folders in dlg.accepted:
+                self.registry.create_group(folders=folders)
+            accepted_count = len(dlg.accepted)
+        else:
+            accepted_count = 0
+
+        total = len(auto) + accepted_count
+        if total:
+            self.refresh_list()
+            self._notify_change(
+                f"Scan complete: {total} mirror group(s) confirmed."
+            )
+        else:
+            self._set_status("Scan complete: no groups confirmed.")
 
     def _notify_change(self, msg: str):
         self._set_status(msg)
@@ -292,6 +310,97 @@ class MirrorGroupPanel(ttk.Frame):
     def _set_status(self, msg: str):
         if self.status_callback:
             self.status_callback(msg)
+
+
+class ScanReviewDialog(tk.Toplevel):
+    """Dialog for reviewing scan results and confirming mirror groups."""
+
+    def __init__(self, parent, candidates: list[list[str]]):
+        super().__init__(parent)
+        self.title("Review Scan Results")
+        self.transient(parent)
+        self.grab_set()
+        self.minsize(600, 420)
+
+        self.accepted: list[list[str]] = []
+        self._candidates = candidates
+        self._vars: list[tk.BooleanVar] = []
+
+        self._build_ui()
+        self._center_on_parent(parent)
+
+    def _center_on_parent(self, parent):
+        self.update_idletasks()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        w, h = self.winfo_width(), self.winfo_height()
+        self.geometry(f"+{px + (pw - w) // 2}+{py + (ph - h) // 2}")
+
+    def _build_ui(self):
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            frame,
+            text=(f"The scan found {len(self._candidates)} candidate "
+                  f"mirror group(s).\n"
+                  "Check the ones you want to confirm as mirror groups:"),
+            wraplength=560,
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        # Scrollable list of candidates with checkboxes
+        canvas_frame = ttk.Frame(frame)
+        canvas_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+
+        canvas = tk.Canvas(canvas_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=canvas.yview)
+        inner = ttk.Frame(canvas)
+
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        for idx, folders in enumerate(self._candidates):
+            var = tk.BooleanVar(value=False)
+            self._vars.append(var)
+
+            group_frame = ttk.Frame(inner)
+            group_frame.pack(fill=tk.X, padx=4, pady=2)
+
+            names = " + ".join(os.path.basename(f) or f for f in folders)
+            cb = ttk.Checkbutton(group_frame, text=names, variable=var)
+            cb.pack(anchor=tk.W)
+
+            for f in folders:
+                ttk.Label(group_frame, text=f"    {f}",
+                          font=("TkDefaultFont", 8),
+                          foreground="gray").pack(anchor=tk.W)
+
+        # Select all / none + OK / Cancel
+        btn_bar = ttk.Frame(frame)
+        btn_bar.pack(fill=tk.X)
+        ttk.Button(btn_bar, text="Select All", command=self._select_all).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_bar, text="Select None", command=self._select_none).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_bar, text="Confirm", width=10, command=self._on_ok).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(btn_bar, text="Cancel", width=10, command=self.destroy).pack(side=tk.RIGHT, padx=2)
+
+    def _select_all(self):
+        for v in self._vars:
+            v.set(True)
+
+    def _select_none(self):
+        for v in self._vars:
+            v.set(False)
+
+    def _on_ok(self):
+        self.accepted = [
+            folders for folders, var in zip(self._candidates, self._vars)
+            if var.get()
+        ]
+        self.destroy()
 
 
 class MirrorGroupDialog(tk.Toplevel):
