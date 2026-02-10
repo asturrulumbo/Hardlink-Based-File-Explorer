@@ -272,3 +272,52 @@ class TestScanForMirrors:
 
         new_groups = registry.scan_for_mirrors([str(a), str(b)])
         assert len(new_groups) == 1
+
+    def test_skips_subfolders_of_registered_group(self, registry, tmp_path):
+        """Subfolders of an existing mirror group should not appear as new groups."""
+        a = tmp_path / "dir_a"
+        b = tmp_path / "dir_b"
+        sub_a = a / "sub"
+        sub_b = b / "sub"
+        sub_a.mkdir(parents=True)
+        sub_b.mkdir(parents=True)
+        # Create hardlinked files in the sub-directories
+        src = sub_a / "file.txt"
+        src.write_text("shared")
+        os.link(str(src), str(sub_b / "file.txt"))
+
+        # Register the parent folders as a mirror group first
+        registry.create_group([str(a), str(b)])
+
+        # Scanning the parent folders should not discover sub/ as a new group
+        new_groups = registry.scan_for_mirrors([str(a), str(b)])
+        assert len(new_groups) == 0
+
+
+class TestClearAllGroups:
+    def test_clears_all_groups(self, registry, two_folders, tmp_path):
+        c = tmp_path / "folder_c"
+        d = tmp_path / "folder_d"
+        c.mkdir()
+        d.mkdir()
+        registry.create_group(two_folders)
+        registry.create_group([str(c), str(d)])
+        assert len(registry.get_all_groups()) == 2
+
+        count = registry.clear_all_groups()
+        assert count == 2
+        assert len(registry.get_all_groups()) == 0
+
+    def test_clear_empty_registry(self, registry):
+        count = registry.clear_all_groups()
+        assert count == 0
+
+    def test_clear_removes_markers(self, registry, two_folders):
+        from hardlink_manager.core.mirror_groups import has_mirror_marker
+        registry.create_group(two_folders)
+        assert has_mirror_marker(two_folders[0])
+        assert has_mirror_marker(two_folders[1])
+
+        registry.clear_all_groups()
+        assert not has_mirror_marker(two_folders[0])
+        assert not has_mirror_marker(two_folders[1])

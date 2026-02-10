@@ -155,3 +155,50 @@ class TestDebouncedHandler:
         handler.on_created(event)  # Should not raise or schedule anything
 
         assert len(handler._pending) == 0
+
+    def test_deletion_propagates(self, mirror_workspace):
+        """Deleting a file via the handler should propagate to mirrors."""
+        from watchdog.events import FileDeletedEvent
+        from hardlink_manager.core.sync import sync_file_to_group
+
+        deleted_files = []
+        delete_event = threading.Event()
+
+        def on_delete(source, deleted):
+            deleted_files.extend(deleted)
+            delete_event.set()
+
+        handler = _DebouncedHandler(
+            mirror_workspace["registry"],
+            on_delete=on_delete,
+            debounce_seconds=0.1,
+        )
+
+        # Create and sync a file first
+        src = os.path.join(mirror_workspace["folder_a"], "del_test.txt")
+        with open(src, "w") as f:
+            f.write("will be deleted")
+        sync_file_to_group(src, mirror_workspace["group"])
+
+        dest = os.path.join(mirror_workspace["folder_b"], "del_test.txt")
+        assert os.path.exists(dest)
+
+        # Simulate: user deletes the file, then watcher fires event
+        os.unlink(src)
+        event = FileDeletedEvent(src)
+        handler.on_deleted(event)
+
+        delete_event.wait(timeout=3.0)
+        time.sleep(0.3)
+
+        assert not os.path.exists(dest)
+        assert len(deleted_files) >= 1
+
+    def test_deletion_ignores_directories(self, mirror_workspace):
+        handler = _DebouncedHandler(mirror_workspace["registry"])
+        from watchdog.events import DirDeletedEvent
+
+        event = DirDeletedEvent(mirror_workspace["folder_a"])
+        handler.on_deleted(event)
+
+        assert len(handler._pending_deletes) == 0

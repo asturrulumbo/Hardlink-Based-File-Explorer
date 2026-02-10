@@ -52,6 +52,7 @@ class HardlinkManagerApp:
         self.watcher = MirrorGroupWatcher(
             self.registry,
             on_sync=self._on_watcher_sync,
+            on_delete=self._on_watcher_delete,
         )
 
         self._build_menu()
@@ -240,6 +241,12 @@ class HardlinkManagerApp:
         """Called from the watcher thread when files are auto-synced."""
         n = len(created)
         msg = f"Auto-synced: {os.path.basename(source)} -> {n} mirror(s)"
+        self.root.after(0, lambda: self._set_status(msg))
+
+    def _on_watcher_delete(self, source: str, deleted: list[str]):
+        """Called from the watcher thread when deletions are propagated."""
+        n = len(deleted)
+        msg = f"Auto-deleted: {os.path.basename(source)} from {n} mirror(s)"
         self.root.after(0, lambda: self._set_status(msg))
 
     def _on_mirror_groups_changed(self):

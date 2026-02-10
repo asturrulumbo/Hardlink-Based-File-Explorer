@@ -138,6 +138,46 @@ def sync_group(group: MirrorGroup) -> dict[str, list[str]]:
     return created
 
 
+def propagate_delete_to_group(deleted_path: str, group: MirrorGroup) -> list[str]:
+    """Propagate a file deletion to all other folders in a mirror group.
+
+    Unlike :func:`delete_from_group`, this function works when the source
+    file has *already* been removed (e.g. triggered by a watcher event).
+    It computes the relative path from the group root folder and deletes
+    the file at the same relative path in every other folder.
+
+    Args:
+        deleted_path: Path of the file that was just deleted.
+        group: The mirror group.
+
+    Returns:
+        List of paths that were deleted.
+    """
+    deleted_path = os.path.normpath(os.path.abspath(deleted_path))
+    if os.path.basename(deleted_path) == MIRROR_MARKER:
+        return []
+    root_folder = _find_root_folder(deleted_path, group)
+    if root_folder is None:
+        return []
+
+    rel_path = os.path.relpath(deleted_path, root_folder)
+    deleted = []
+
+    for folder in group.folders:
+        folder = os.path.normpath(os.path.abspath(folder))
+        if folder == root_folder:
+            continue
+        candidate = os.path.join(folder, rel_path)
+        if os.path.isfile(candidate):
+            try:
+                os.unlink(candidate)
+                deleted.append(candidate)
+            except OSError:
+                continue
+
+    return deleted
+
+
 def delete_from_group(file_path: str, group: MirrorGroup) -> list[str]:
     """Delete a file from ALL folders in a mirror group.
 

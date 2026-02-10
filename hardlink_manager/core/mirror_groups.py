@@ -261,6 +261,25 @@ class MirrorGroupRegistry:
         """Check if a folder belongs to any mirror group."""
         return self.find_group_for_folder(folder) is not None
 
+    def _is_covered_by_existing_group(self, candidate_folders: list[str]) -> bool:
+        """Return True if all *candidate_folders* are subfolders of a single registered group.
+
+        A set of candidate folders is "covered" when every folder sits
+        inside (or equals) a folder from the same existing mirror group,
+        meaning the existing group's recursive sync already handles them.
+        """
+        for group in self._groups.values():
+            norm_gf = [os.path.normpath(os.path.abspath(f)) for f in group.folders]
+            if all(
+                any(
+                    cf == gf or cf.startswith(gf + os.sep)
+                    for gf in norm_gf
+                )
+                for cf in candidate_folders
+            ):
+                return True
+        return False
+
     def quick_scan_mirrors(
         self,
         root_folders: list[str],
@@ -321,6 +340,9 @@ class MirrorGroupRegistry:
                 continue
             folder_set = set(folders)
             if folder_set in existing_sets:
+                continue
+            # Skip subfolders already covered by an existing group
+            if self._is_covered_by_existing_group(folders):
                 continue
             group = self.create_group(folders=folders)
             new_groups.append(group)
@@ -452,6 +474,9 @@ class MirrorGroupRegistry:
                 continue
             if set(filtered) in existing_sets:
                 continue
+            # Skip subfolders already covered by an existing group
+            if self._is_covered_by_existing_group(filtered):
+                continue
             # Separate: all marked → auto, otherwise → candidate
             if all(has_mirror_marker(f) for f in filtered):
                 auto_confirmed.append(filtered)
@@ -538,6 +563,9 @@ class MirrorGroupRegistry:
             folder_set = set(component_folders)
             # Skip if already registered
             if folder_set in existing_sets:
+                continue
+            # Skip subfolders already covered by an existing group
+            if self._is_covered_by_existing_group(component_folders):
                 continue
             group = self.create_group(folders=component_folders)
             new_groups.append(group)

@@ -252,3 +252,54 @@ class TestDeleteFromGroup:
     def test_delete_nonexistent_file(self, mirror_group):
         deleted = delete_from_group("/nonexistent/file.txt", mirror_group)
         assert deleted == []
+
+
+class TestPropagateDeleteToGroup:
+    """Tests for propagate_delete_to_group (used by the watcher after a file is already removed)."""
+
+    def test_propagates_deletion_after_source_removed(self, mirror_group, mirror_folders):
+        from hardlink_manager.core.sync import propagate_delete_to_group
+
+        # Create and sync a file
+        src = os.path.join(mirror_folders[0], "to_remove.txt")
+        with open(src, "w") as f:
+            f.write("will be removed")
+        sync_file_to_group(src, mirror_group)
+
+        # Verify it exists in all mirrors
+        for folder in mirror_folders:
+            assert os.path.exists(os.path.join(folder, "to_remove.txt"))
+
+        # Simulate what happens on a watcher event: the source is already deleted
+        os.unlink(src)
+        assert not os.path.exists(src)
+
+        # propagate_delete_to_group should still delete from the other folders
+        deleted = propagate_delete_to_group(src, mirror_group)
+        assert len(deleted) == 2  # 3 folders minus the source
+        for folder in mirror_folders[1:]:
+            assert not os.path.exists(os.path.join(folder, "to_remove.txt"))
+
+    def test_propagates_subdirectory_deletion(self, mirror_group, mirror_folders):
+        from hardlink_manager.core.sync import propagate_delete_to_group
+
+        sub = os.path.join(mirror_folders[0], "deep", "nested")
+        os.makedirs(sub)
+        src = os.path.join(sub, "deep_file.txt")
+        with open(src, "w") as f:
+            f.write("deep content")
+        sync_file_to_group(src, mirror_group)
+
+        os.unlink(src)
+        deleted = propagate_delete_to_group(src, mirror_group)
+        assert len(deleted) == 2
+        for folder in mirror_folders[1:]:
+            assert not os.path.exists(os.path.join(folder, "deep", "nested", "deep_file.txt"))
+
+    def test_skips_mirror_marker(self, mirror_group, mirror_folders):
+        from hardlink_manager.core.sync import propagate_delete_to_group
+        from hardlink_manager.core.mirror_groups import MIRROR_MARKER
+
+        marker_path = os.path.join(mirror_folders[0], MIRROR_MARKER)
+        deleted = propagate_delete_to_group(marker_path, mirror_group)
+        assert deleted == []
