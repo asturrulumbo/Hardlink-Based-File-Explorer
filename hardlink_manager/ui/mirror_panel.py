@@ -38,7 +38,11 @@ class MirrorGroupPanel(ttk.Frame):
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
         self._scan_btn = ttk.Button(toolbar, text="Scan for Mirrors", command=self._scan_for_mirrors)
         self._scan_btn.pack(side=tk.LEFT, padx=2)
+        self._quick_scan_btn = ttk.Button(toolbar, text="Quick Scan", command=self._quick_scan)
+        self._quick_scan_btn.pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Sync Now", command=self._sync_group).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Button(toolbar, text="Clear All", command=self._clear_all_groups).pack(side=tk.LEFT, padx=2)
 
         self._scan_thread: threading.Thread | None = None
 
@@ -192,7 +196,116 @@ class MirrorGroupPanel(ttk.Frame):
         except Exception as e:
             messagebox.showerror("Sync Error", str(e), parent=self.winfo_toplevel())
 
-    # -- Background mirror scan --
+    def _clear_all_groups(self):
+        """Clear all mirror groups from the registry after confirmation."""
+        groups = self.registry.get_all_groups()
+        if not groups:
+            messagebox.showinfo(
+                "Nothing to Clear",
+                "There are no mirror groups to clear.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+        if not messagebox.askyesno(
+            "Clear All Mirror Groups",
+            f"Remove all {len(groups)} mirror group(s)?\n\n"
+            "This clears the group list and removes the mirror\n"
+            "marker files from the associated folders.\n"
+            "Existing files and hardlinks are not affected.",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        count = self.registry.clear_all_groups()
+        self.detail_list.delete(0, tk.END)
+        self.refresh_list()
+        self._notify_change(f"Cleared {count} mirror group(s).")
+
+    # -- Background mirror scans --
+
+    def _quick_scan(self):
+        """Quick scan: rediscover mirror groups from marker files only."""
+        if self._scan_thread is not None and self._scan_thread.is_alive():
+            return  # already running
+
+        if not self.get_scan_folders:
+            messagebox.showinfo(
+                "Not Available",
+                "Scan folders source is not configured.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+
+        root_folders = self.get_scan_folders()
+        if not root_folders:
+            messagebox.showinfo(
+                "No Folders Open",
+                "Open one or more folders in the File Browser first\n"
+                "(File > Open Folder or File > Add Folder to Tree).",
+                parent=self.winfo_toplevel(),
+            )
+            return
+
+        self._scan_btn.configure(state=tk.DISABLED)
+        self._quick_scan_btn.configure(state=tk.DISABLED)
+        self._set_status("Quick scan: looking for mirror markers...")
+
+        self._quick_scan_results: list = []
+        self._scan_error = None
+        self._scan_progress = ""
+
+        def _worker():
+            def _on_progress(dirs_done: int, markers_found: int):
+                self._scan_progress = (
+                    f"Quick scan... {dirs_done} folder(s) checked, "
+                    f"{markers_found} marker(s) found"
+                )
+
+            try:
+                self._quick_scan_results = self.registry.quick_scan_mirrors(
+                    root_folders, progress_callback=_on_progress,
+                )
+            except Exception as e:
+                self._scan_error = str(e)
+
+        self._scan_thread = threading.Thread(target=_worker, daemon=True)
+        self._scan_thread.start()
+        self._poll_quick_scan()
+
+    def _poll_quick_scan(self):
+        """Check whether the background quick scan thread has finished."""
+        if self._scan_thread is not None and self._scan_thread.is_alive():
+            if self._scan_progress:
+                self._set_status(self._scan_progress)
+            self.after(200, self._poll_quick_scan)
+            return
+
+        self._scan_btn.configure(state=tk.NORMAL)
+        self._quick_scan_btn.configure(state=tk.NORMAL)
+        self._scan_thread = None
+
+        if self._scan_error is not None:
+            self._set_status("Quick scan failed.")
+            messagebox.showerror(
+                "Quick Scan Error", self._scan_error,
+                parent=self.winfo_toplevel(),
+            )
+            return
+
+        new_groups = self._quick_scan_results
+        if new_groups:
+            self.refresh_list()
+            self._notify_change(
+                f"Quick scan complete: {len(new_groups)} mirror group(s) restored."
+            )
+        else:
+            self._set_status("Quick scan complete: no new mirror groups found.")
+            messagebox.showinfo(
+                "Quick Scan Complete",
+                "No new mirror groups were found from marker files.",
+                parent=self.winfo_toplevel(),
+            )
+
+    # -- Full content mirror scan --
 
     def _scan_for_mirrors(self):
         """Scan all folders opened in the File Browser for content-based mirrors."""
@@ -217,8 +330,9 @@ class MirrorGroupPanel(ttk.Frame):
             )
             return
 
-        # Disable button while scanning
+        # Disable buttons while scanning
         self._scan_btn.configure(state=tk.DISABLED)
+        self._quick_scan_btn.configure(state=tk.DISABLED)
         self._set_status("Scanning for content mirrors...")
 
         # Shared state between the worker thread and the UI
@@ -256,6 +370,7 @@ class MirrorGroupPanel(ttk.Frame):
             return
 
         self._scan_btn.configure(state=tk.NORMAL)
+        self._quick_scan_btn.configure(state=tk.NORMAL)
         self._scan_thread = None
 
         if self._scan_error is not None:

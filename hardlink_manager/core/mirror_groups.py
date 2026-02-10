@@ -192,6 +192,16 @@ class MirrorGroupRegistry:
             return True
         return False
 
+    def clear_all_groups(self) -> int:
+        """Remove all mirror groups and their markers. Returns the count removed."""
+        count = len(self._groups)
+        for group in self._groups.values():
+            for f in group.folders:
+                remove_mirror_marker(f)
+        self._groups.clear()
+        self.save()
+        return count
+
     def add_folder_to_group(self, group_id: str, folder: str) -> bool:
         """Add a folder to a mirror group. Returns True on success."""
         group = self._groups.get(group_id)
@@ -250,6 +260,72 @@ class MirrorGroupRegistry:
     def is_folder_in_group(self, folder: str) -> bool:
         """Check if a folder belongs to any mirror group."""
         return self.find_group_for_folder(folder) is not None
+
+    def quick_scan_mirrors(
+        self,
+        root_folders: list[str],
+        progress_callback: Optional["Callable[[int, int], None]"] = None,
+    ) -> list["MirrorGroup"]:
+        """Quick scan: discover mirror groups from existing marker files only.
+
+        Walks each root folder recursively looking for ``.hardlink_mirror``
+        manifest files.  Folders that share the same ``group_id`` in their
+        marker are grouped together.  Only groups not already registered
+        are created.
+
+        This is much faster than a full content scan because it skips
+        file hashing entirely -- it only checks for the presence and
+        content of marker files.
+
+        The *progress_callback*, if provided, is called periodically with
+        ``(directories_scanned, markers_found)``.
+
+        Returns:
+            List of newly created :class:`MirrorGroup` objects.
+        """
+        root_folders = [os.path.normpath(os.path.abspath(f))
+                        for f in root_folders if os.path.isdir(f)]
+        if not root_folders:
+            return []
+
+        # Collect folders grouped by the group_id stored in their marker
+        group_id_folders: dict[str, list[str]] = {}
+        dirs_scanned = 0
+        markers_found = 0
+
+        for root in root_folders:
+            for dirpath, dirnames, _filenames in os.walk(root):
+                dirs_scanned += 1
+                marker_id = read_mirror_marker(dirpath)
+                if marker_id is not None:
+                    markers_found += 1
+                    group_id_folders.setdefault(marker_id, []).append(dirpath)
+                if dirs_scanned % 50 == 0 and progress_callback is not None:
+                    progress_callback(dirs_scanned, markers_found)
+
+        if progress_callback is not None:
+            progress_callback(dirs_scanned, markers_found)
+
+        # Also check each root folder itself (os.walk yields it as the
+        # first dirpath, so this is already covered above, but be safe)
+
+        # Existing folder sets -- skip already-registered groups
+        existing_sets: list[set[str]] = []
+        for group in self._groups.values():
+            norm = {os.path.normpath(os.path.abspath(f)) for f in group.folders}
+            existing_sets.append(norm)
+
+        new_groups: list[MirrorGroup] = []
+        for gid, folders in group_id_folders.items():
+            if len(folders) < 2:
+                continue
+            folder_set = set(folders)
+            if folder_set in existing_sets:
+                continue
+            group = self.create_group(folders=folders)
+            new_groups.append(group)
+
+        return new_groups
 
     def scan_content_mirrors(
         self,
