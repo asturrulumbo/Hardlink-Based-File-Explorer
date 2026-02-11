@@ -303,6 +303,7 @@ def build_manual():
         (1, "2.  Understanding Hardlinks"),
         (2, "     What Are Hardlinks?"),
         (2, "     Why Hardlinks?"),
+        (2, "     Hardlinks vs. Symbolic Links"),
         (2, "     Constraints and Limitations"),
         (1, "3.  Installation"),
         (2, "     System Requirements"),
@@ -462,11 +463,50 @@ def build_manual():
     pdf.bullet("Automatic content sync: Editing the file through any link edits the same data.")
     pdf.bullet("No dangling references: Unlike symbolic links, hardlinks cannot become \"broken.\"")
 
+    pdf.section_title("Hardlinks vs. Symbolic Links")
+    pdf.body(
+        "Symbolic links (symlinks) are pointers that store the path to a target file. "
+        "They are fundamentally different from hardlinks and are deliberately excluded "
+        "from all operations in HardlinkManager.exe. The following table summarizes "
+        "the key differences:"
+    )
+    pdf.bullet(
+        "A hardlink is a direct reference to the file's data (its inode). A symbolic "
+        "link is an indirect reference that stores a path string pointing to another "
+        "filename."
+    )
+    pdf.bullet(
+        "Hardlinks remain valid if the original filename is renamed or moved (within "
+        "the same volume). Symbolic links break if the target path changes, creating "
+        "a dangling reference."
+    )
+    pdf.bullet(
+        "Hardlinks share the same inode and occupy no additional disk space. Symbolic "
+        "links are separate filesystem objects with their own inodes."
+    )
+    pdf.bullet(
+        "Hardlinks are restricted to the same volume. Symbolic links can point across "
+        "volumes and even to network paths."
+    )
+    pdf.body(
+        "Because HardlinkManager.exe relies on inode identity to track, synchronize, "
+        "and search for files, symbolic links are incompatible with its design. A "
+        "symbolic link does not share an inode with its target, so it would not be "
+        "detected by intersection search, would not synchronize correctly in mirror "
+        "groups, and could introduce dangling references if the target were moved. "
+        "For these reasons, the application filters symbolic links out of all file "
+        "listings, directory scans, and hardlink operations."
+    )
+
     pdf.section_title("Constraints and Limitations")
     pdf.bullet("Same volume only: Hardlinks can only be created between files on the same disk "
                "partition or volume. Cross-drive hardlinks are not possible.")
     pdf.bullet("Files only: Directories cannot be hardlinked. Mirror Groups work around this by "
                "synchronizing individual files within directories.")
+    pdf.bullet("Regular files only: Symbolic links (symlinks) are excluded from all operations. "
+               "The application will not display symlinks in file listings, will not allow "
+               "them as sources for hardlink creation, and will skip them during mirror group "
+               "synchronization and scanning. See Section 2.3 for the rationale.")
     pdf.bullet("NTFS required (Windows): Hardlinks require an NTFS-formatted volume. FAT32 and "
                "exFAT do not support them.")
     pdf.bullet("Permissions: On some systems, creating hardlinks may require elevated privileges.")
@@ -582,7 +622,8 @@ def build_manual():
     pdf.section_title("File List and Tabs")
     pdf.body(
         "When you open a directory, its contents are displayed in the right-hand panel as a "
-        "table with the following columns:"
+        "table. Only regular files and directories are shown; symbolic links are filtered "
+        "out and will not appear in the listing. The table includes the following columns:"
     )
     pdf.bullet("Name \u2014 The file or subdirectory name.")
     pdf.bullet("Size \u2014 The file size in a human-readable format.")
@@ -622,7 +663,8 @@ def build_manual():
     )
     pdf.note_box(
         "Both the source file and destination folder must reside on the same filesystem "
-        "volume. If they do not, the application will display an error."
+        "volume. If they do not, the application will display an error. The source must "
+        "be a regular file; symbolic links cannot be used as a hardlink source."
     )
 
     pdf.section_title("Viewing Hardlinks")
@@ -918,6 +960,16 @@ def build_manual():
     pdf.body(
         "A hardlink count of 1 means only one directory entry references this file\u2014it "
         "has no additional hardlinks. This is the default state for any newly created file."
+    )
+
+    pdf.subsection_title("Symbolic links do not appear in file listings")
+    pdf.body(
+        "This is by design. HardlinkManager.exe operates exclusively on regular files and "
+        "deliberately filters out symbolic links from the file browser, directory scans, "
+        "mirror group synchronization, and intersection search. Symbolic links do not share "
+        "an inode with their target and are incompatible with the application's hardlink-based "
+        "approach. If you need a file to appear in multiple locations, create a hardlink to "
+        "it instead of a symbolic link."
     )
 
     pdf.subsection_title("Scanning does not find expected mirrors")
