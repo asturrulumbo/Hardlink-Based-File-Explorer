@@ -55,7 +55,7 @@ class Manual(FPDF):
             return
         self.set_font("Sans", "I", 8)
         self.set_text_color(120, 120, 120)
-        self.cell(0, 8, "Hardlink Manager \u2014 Instruction Manual", align="L")
+        self.cell(0, 8, "HardlinkManager.exe \u2014 Instruction Manual", align="L")
         self.cell(0, 8, f"Page {self.page_no()}", align="R", new_x="LMARGIN", new_y="NEXT")
         self.set_draw_color(180, 180, 180)
         self.line(self.MARGIN, self.get_y(), self.PAGE_W - self.MARGIN, self.get_y())
@@ -79,31 +79,71 @@ class Manual(FPDF):
 
     def title_page(self):
         self.add_page()
-        self.ln(50)
-        self.set_font("Sans", "B", 32)
+        # ── Outer decorative border ──
+        bm = 12  # border margin from page edge
+        self.set_draw_color(80, 80, 80)
+        self.set_line_width(0.6)
+        self.rect(bm, bm, self.PAGE_W - 2 * bm, 297 - 2 * bm)
+        self.set_line_width(0.2)
+        self.rect(bm + 2, bm + 2, self.PAGE_W - 2 * bm - 4, 297 - 2 * bm - 4)
+        self.set_line_width(0.2)  # reset
+
+        # ── Top decorative rule ──
+        self.ln(38)
+        cx = self.PAGE_W / 2
+        self.set_draw_color(100, 100, 100)
+        self.set_line_width(0.4)
+        self.line(cx - 50, self.get_y(), cx + 50, self.get_y())
+        self.set_line_width(0.2)
+        self.ln(12)
+
+        # ── Title ──
+        self.set_font("Sans", "B", 34)
         self._reset_text()
-        self.cell(0, 16, "Hardlink Manager", align="C", new_x="LMARGIN", new_y="NEXT")
-        self.ln(4)
-        self.set_font("Sans", "", 18)
-        self.set_text_color(80, 80, 80)
+        self.cell(0, 18, "HardlinkManager.exe", align="C", new_x="LMARGIN", new_y="NEXT")
+        self.ln(6)
+
+        # ── Subtitle ──
+        self.set_font("Sans", "", 20)
+        self.set_text_color(70, 70, 70)
         self.cell(0, 12, "Instruction Manual", align="C", new_x="LMARGIN", new_y="NEXT")
-        self.ln(8)
+        self.ln(10)
+
+        # ── Central rule ──
+        self.set_draw_color(140, 140, 140)
+        self.line(cx - 35, self.get_y(), cx + 35, self.get_y())
+        self.ln(10)
+
+        # ── Version ──
         self.set_font("Sans", "I", 13)
         self.set_text_color(100, 100, 100)
         self.cell(0, 10, "Version 0.2.0", align="C", new_x="LMARGIN", new_y="NEXT")
-        self.ln(40)
-        self.set_draw_color(60, 60, 60)
-        cx = self.PAGE_W / 2
-        self.line(cx - 30, self.get_y(), cx + 30, self.get_y())
-        self.ln(10)
+        self.ln(20)
+
+        # ── Description ──
         self.set_font("Serif", "I", 11)
         self.set_text_color(80, 80, 80)
         self.multi_cell(
-            0, 6,
-            "A cross-platform application for managing hardlink-based\n"
+            0, 6.5,
+            "A standalone Windows application for managing hardlink-based\n"
             "file indexing and synchronization across multiple directories.",
             align="C",
         )
+        self.ln(6)
+        self.set_font("Serif", "", 10)
+        self.set_text_color(100, 100, 100)
+        self.multi_cell(
+            0, 5.5,
+            "No installation required \u2014 run the executable directly.",
+            align="C",
+        )
+
+        # ── Bottom decorative rule ──
+        self.set_y(297 - bm - 30)
+        self.set_draw_color(100, 100, 100)
+        self.set_line_width(0.4)
+        self.line(cx - 50, self.get_y(), cx + 50, self.get_y())
+        self.set_line_width(0.2)
 
     def toc_page(self):
         self.add_page()
@@ -267,10 +307,10 @@ def build_manual():
         (2, "     Constraints and Limitations"),
         (1, "3.  Installation"),
         (2, "     System Requirements"),
-        (2, "     Installing from Source"),
-        (2, "     Building a Standalone Executable"),
+        (2, "     Running the Executable"),
+        (2, "     Building from Source (Advanced)"),
         (1, "4.  Getting Started"),
-        (2, "     Launching the Application"),
+        (2, "     Launching HardlinkManager.exe"),
         (2, "     The Main Window"),
         (2, "     Navigating the Interface"),
         (1, "5.  File Browser"),
@@ -381,13 +421,13 @@ def build_manual():
 
     pdf.section_title("About This Manual")
     pdf.body(
-        "This manual covers installation, core concepts, and practical usage of Hardlink "
-        "Manager version 0.2.0. It is organized to be read sequentially by new users or "
-        "consulted by section as a reference. Chapter 2 introduces the concept of hardlinks "
-        "for readers unfamiliar with them. Chapters 3\u20134 cover installation and first "
-        "launch. Chapters 5\u20138 describe the application's features in detail. Chapters "
-        "9\u201310 cover shortcuts and configuration. Chapter 11 provides worked examples, "
-        "and Chapters 12\u201313 address troubleshooting and technical details."
+        "This manual covers setup, core concepts, and practical usage of "
+        "HardlinkManager.exe version 0.2.0. It is organized to be read sequentially by "
+        "new users or consulted by section as a reference. Chapter 2 introduces the concept "
+        "of hardlinks for readers unfamiliar with them. Chapters 3\u20134 cover running the "
+        "executable and first launch. Chapters 5\u20138 describe the application's features "
+        "in detail. Chapters 9\u201310 cover shortcuts and configuration. Chapter 11 provides "
+        "worked examples, and Chapters 12\u201313 address troubleshooting and technical details."
     )
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -442,34 +482,47 @@ def build_manual():
     pdf.chapter_title("Installation")
 
     pdf.section_title("System Requirements")
-    pdf.bullet("Python 3.7 or later (for running from source)")
-    pdf.bullet("Operating system: Windows, macOS, or Linux")
-    pdf.bullet("Filesystem: NTFS (Windows), HFS+/APFS (macOS), or ext4/XFS/Btrfs (Linux)")
-    pdf.bullet("Dependencies: watchdog (installed automatically via pip)")
+    pdf.bullet("Operating system: Windows 10 or later (NTFS filesystem required)")
+    pdf.bullet("No Python installation or additional dependencies needed")
+    pdf.bullet("The executable is fully self-contained and portable")
+    pdf.note_box(
+        "Hardlinks require an NTFS-formatted volume. Drives formatted as FAT32 or "
+        "exFAT do not support hardlinks. Most modern Windows system drives use NTFS by default."
+    )
 
-    pdf.section_title("Installing from Source")
-    pdf.body("Clone the repository and install dependencies:")
+    pdf.section_title("Running the Executable")
+    pdf.body(
+        "HardlinkManager.exe is a standalone, portable application that requires no "
+        "installation. To get started:"
+    )
+    pdf.numbered_item(1, "Place HardlinkManager.exe in any convenient location on your computer "
+                         "(e.g., your Desktop, a Tools folder, or a USB drive).")
+    pdf.numbered_item(2, "Double-click HardlinkManager.exe to launch the application.")
+    pdf.body(
+        "No installer, no setup wizard, no configuration files to create. The application "
+        "stores its data (mirror group registrations) in the standard Windows application "
+        "data directory; see Chapter 10 for details."
+    )
+    pdf.note_box(
+        "On first launch, Windows SmartScreen may display a warning because the executable "
+        "is not digitally signed. Click \"More info\" and then \"Run anyway\" to proceed."
+    )
+
+    pdf.section_title("Building from Source (Advanced)")
+    pdf.body(
+        "For developers or users who wish to modify the application, HardlinkManager.exe "
+        "can be rebuilt from source. This requires Python 3.7 or later and PyInstaller:"
+    )
     pdf.code_block(
         "git clone https://github.com/asturrulumbo/\n"
         "    Hardlink-Based-File-Explorer.git\n"
         "cd Hardlink-Based-File-Explorer\n"
-        "pip install -r requirements.txt"
-    )
-    pdf.body("The application can then be launched directly (see Chapter 4).")
-
-    pdf.section_title("Building a Standalone Executable")
-    pdf.body(
-        "To distribute the application without requiring a Python installation, you can "
-        "build a standalone executable using PyInstaller:"
-    )
-    pdf.code_block(
+        "pip install -r requirements.txt\n"
         "python build.py              # Single-file executable\n"
-        "python build.py --onedir     # Directory-based bundle\n"
-        "python build.py --clean      # Clean previous builds first"
+        "python build.py --onedir     # Directory bundle (faster startup)"
     )
     pdf.body(
-        "The output will be placed in the dist/ directory. The single-file option produces one "
-        "portable executable; the directory option produces a folder with faster startup time."
+        "The output is placed in the dist/ directory."
     )
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -477,12 +530,16 @@ def build_manual():
     # ═══════════════════════════════════════════════════════════════════════
     pdf.chapter_title("Getting Started")
 
-    pdf.section_title("Launching the Application")
-    pdf.body("From the project directory, run:")
-    pdf.code_block("python -m hardlink_manager")
-    pdf.body("Alternatively, if you built a standalone executable:")
-    pdf.code_block("./dist/HardlinkManager          # Linux / macOS\n"
-                   "dist\\HardlinkManager.exe        # Windows")
+    pdf.section_title("Launching HardlinkManager.exe")
+    pdf.body(
+        "Double-click HardlinkManager.exe to launch the application. The main window will "
+        "appear after a brief loading period. No command-line arguments are required."
+    )
+    pdf.body(
+        "You may wish to create a shortcut on your Desktop or pin the application to your "
+        "taskbar for quick access. Right-click the executable and select the appropriate "
+        "option from the Windows context menu."
+    )
 
     pdf.section_title("The Main Window")
     pdf.body(
@@ -763,28 +820,14 @@ def build_manual():
     pdf.chapter_title("Configuration and Data Storage")
 
     pdf.body(
-        "Hardlink Manager stores its persistent data (mirror group registrations) in a "
-        "platform-specific application data directory:"
+        "HardlinkManager.exe stores its persistent data (mirror group registrations) in "
+        "the standard Windows application data directory:"
     )
-    pdf.ln(1)
-    pdf.set_font("Sans", "B", 10)
-    pdf.set_fill_color(230, 230, 230)
-    col1_w = 40
-    col2_w = 130
-    pdf.cell(col1_w, 7, "  Platform", fill=True)
-    pdf.cell(col2_w, 7, "  Path", fill=True, new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Mono", "", 9)
-    paths = [
-        ("Windows", "%APPDATA%/HardlinkManager/"),
-        ("macOS", "~/Library/Application Support/HardlinkManager/"),
-        ("Linux", "~/.config/hardlink_manager/"),
-    ]
-    for plat, path in paths:
-        pdf.set_font("Serif", "", 10)
-        pdf.cell(col1_w, 6.5, f"  {plat}")
-        pdf.set_font("Mono", "", 9)
-        pdf.cell(col2_w, 6.5, f"  {path}", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(4)
+    pdf.code_block("%APPDATA%\\HardlinkManager\\")
+    pdf.body(
+        "On a typical Windows installation this resolves to a path like "
+        "C:\\Users\\YourName\\AppData\\Roaming\\HardlinkManager\\."
+    )
 
     pdf.body(
         "The primary data file is mirror_groups.json, which stores all mirror group definitions "
@@ -859,17 +902,17 @@ def build_manual():
 
     pdf.subsection_title("\"Permission denied\" when creating hardlinks")
     pdf.body(
-        "On some systems, creating hardlinks requires administrative or elevated privileges. "
-        "On Windows, try running the application as Administrator. On Unix systems, ensure "
-        "you have write permissions to the destination directory."
+        "Creating hardlinks may require administrative privileges on some Windows "
+        "configurations. Right-click HardlinkManager.exe and select \"Run as administrator\" "
+        "to launch with elevated permissions."
     )
 
     pdf.subsection_title("Mirror group synchronization not working")
     pdf.body(
         "Verify that automatic synchronization is enabled for the group (check the toggle "
-        "in the Mirror Groups panel). Ensure the application is running\u2014the filesystem "
-        "watcher only operates while Hardlink Manager is active. If issues persist, try "
-        "a manual \"Sync Now\" to diagnose any underlying errors."
+        "in the Mirror Groups panel). Ensure HardlinkManager.exe is running\u2014the "
+        "filesystem watcher only operates while the application is active. If issues "
+        "persist, try a manual \"Sync Now\" to diagnose any underlying errors."
     )
 
     pdf.subsection_title("Files appear with hardlink count of 1")
@@ -947,8 +990,7 @@ def build_manual():
     pdf.set_font("Serif", "I", 10)
     pdf.set_text_color(100, 100, 100)
     pdf.multi_cell(0, 5.5,
-                   "Hardlink Manager version 0.2.0\n"
-                   "This manual was generated for the Hardlink-Based File Explorer project.",
+                   "HardlinkManager.exe \u2014 Version 0.2.0",
                    align="C")
 
     # ── Output ──────────────────────────────────────────────────────────────
