@@ -1,15 +1,22 @@
-"""Dialog windows for hardlink operations."""
+"""Dialog windows for hardlink and symlink operations."""
 
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from typing import Callable, Optional
 
-from hardlink_manager.core.hardlink_ops import create_hardlink, delete_hardlink, find_all_hardlinks
+from hardlink_manager.core.hardlink_ops import (
+    create_hardlink,
+    create_folder_symlink,
+    delete_hardlink,
+    find_all_hardlinks,
+)
 from hardlink_manager.utils.filesystem import (
     format_file_size,
     get_hardlink_count,
     get_inode,
+    is_symlink_broken,
+    read_symlink_target,
     sanitize_filename,
 )
 
@@ -443,3 +450,151 @@ class ViewMirrorsDialog(tk.Toplevel):
             if os.path.isdir(folder):
                 self.destroy()
                 self.on_navigate(folder)
+
+
+class CreateSymlinkDialog(tk.Toplevel):
+    """Dialog for creating a folder symlink ("See Also" reference)."""
+
+    def __init__(self, parent, dest_dir: str):
+        super().__init__(parent)
+        self.title("Create Folder Symlink")
+        self.dest_dir = dest_dir
+        self.result = None
+        self.transient(parent)
+        self.grab_set()
+
+        self.minsize(500, 200)
+        self._build_ui()
+        self._center_on_parent(parent)
+
+    def _center_on_parent(self, parent):
+        self.update_idletasks()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        w, h = self.winfo_width(), self.winfo_height()
+        x = px + (pw - w) // 2
+        y = py + (ph - h) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _build_ui(self):
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        # Target folder
+        ttk.Label(frame, text="Target folder (the folder to reference):").grid(
+            row=0, column=0, sticky=tk.W, pady=2
+        )
+        self.target_var = tk.StringVar()
+        target_entry = ttk.Entry(frame, textvariable=self.target_var, width=50)
+        target_entry.grid(row=1, column=0, sticky=tk.EW, pady=2, padx=(0, 5))
+        ttk.Button(frame, text="Browse...", command=self._browse_target).grid(
+            row=1, column=1, pady=2
+        )
+
+        # Link name
+        ttk.Label(frame, text="Symlink name:").grid(row=2, column=0, sticky=tk.W, pady=(10, 2))
+        self.name_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=self.name_var, width=50).grid(
+            row=3, column=0, columnspan=2, sticky=tk.EW, pady=2
+        )
+
+        # Destination info
+        ttk.Label(frame, text=f"Will be created in: {self.dest_dir}",
+                  wraplength=450, foreground="gray").grid(
+            row=4, column=0, columnspan=2, sticky=tk.W, pady=(5, 0)
+        )
+
+        frame.columnconfigure(0, weight=1)
+
+        # Buttons
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=5, column=0, columnspan=2, pady=(15, 0))
+        ttk.Button(btn_frame, text="Create", command=self._on_create).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=5)
+
+    def _browse_target(self):
+        d = filedialog.askdirectory(parent=self, title="Select Target Folder")
+        if d:
+            self.target_var.set(d)
+            # Auto-fill name from target basename if empty
+            if not self.name_var.get().strip():
+                self.name_var.set(os.path.basename(d))
+
+    def _on_create(self):
+        target = self.target_var.get().strip()
+        link_name = sanitize_filename(self.name_var.get().strip())
+        if not target:
+            messagebox.showwarning("Missing Target", "Please select a target folder.", parent=self)
+            return
+        if not link_name:
+            messagebox.showwarning("Missing Name", "Please enter a name for the symlink.", parent=self)
+            return
+        try:
+            result_path = create_folder_symlink(target, self.dest_dir, link_name)
+            self.result = result_path
+            self.destroy()
+        except Exception as e:
+            messagebox.showerror("Error Creating Symlink", str(e), parent=self)
+
+
+class ViewSymlinkDialog(tk.Toplevel):
+    """Dialog showing details of a folder symlink."""
+
+    def __init__(self, parent, symlink_path: str,
+                 on_navigate: Optional[Callable[[str], None]] = None):
+        super().__init__(parent)
+        self.title("Symlink Details")
+        self.symlink_path = symlink_path
+        self.on_navigate = on_navigate
+        self.transient(parent)
+        self.grab_set()
+
+        self.minsize(500, 200)
+        self._build_ui()
+        self._center_on_parent(parent)
+
+    def _center_on_parent(self, parent):
+        self.update_idletasks()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        w, h = self.winfo_width(), self.winfo_height()
+        x = px + (pw - w) // 2
+        y = py + (ph - h) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _build_ui(self):
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        info_frame = ttk.LabelFrame(frame, text="Symlink Information", padding=5)
+        info_frame.pack(fill=tk.X, pady=(0, 10))
+
+        name = os.path.basename(self.symlink_path)
+        broken = is_symlink_broken(self.symlink_path)
+        try:
+            target = read_symlink_target(self.symlink_path)
+        except OSError:
+            target = "(unreadable)"
+
+        ttk.Label(info_frame, text=f"Name: {name}").pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"Location: {os.path.dirname(self.symlink_path)}",
+                  wraplength=450).pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"Points to: {target}", wraplength=450).pack(anchor=tk.W)
+
+        status = "Broken (target not found)" if broken else "OK"
+        fg = "red" if broken else "green"
+        ttk.Label(info_frame, text=f"Status: {status}", foreground=fg).pack(anchor=tk.W)
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(pady=(10, 0))
+
+        if self.on_navigate and not broken:
+            ttk.Button(btn_frame, text="Go to Target",
+                       command=lambda: self._navigate(target)).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(btn_frame, text="Close", command=self.destroy).pack(side=tk.LEFT, padx=5)
+
+    def _navigate(self, target: str):
+        if self.on_navigate and os.path.isdir(target):
+            self.destroy()
+            self.on_navigate(target)
