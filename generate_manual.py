@@ -156,13 +156,12 @@ class Manual(FPDF):
         self.ln(8)
 
     def toc_entry(self, level, text):
-        indent = 0 if level == 1 else 8
         if level == 1:
             self.set_font("Sans", "B", 11)
         else:
             self.set_font("Sans", "", 10)
+            self.set_x(self.MARGIN + 8)
         self._reset_text()
-        self.cell(indent)
         self.cell(0, 7, text, new_x="LMARGIN", new_y="NEXT")
 
     def chapter_title(self, title):
@@ -197,13 +196,13 @@ class Manual(FPDF):
     def body(self, text):
         self.set_font("Serif", "", 10.5)
         self._reset_text()
-        self.multi_cell(0, 5.5, text)
+        self.multi_cell(0, 5.5, text, align="L")
         self.ln(2)
 
     def body_italic(self, text):
         self.set_font("Serif", "I", 10.5)
         self.set_text_color(60, 60, 60)
-        self.multi_cell(0, 5.5, text)
+        self.multi_cell(0, 5.5, text, align="L")
         self._reset_text()
         self.ln(2)
 
@@ -213,7 +212,7 @@ class Manual(FPDF):
         self.cell(indent)
         bullet_w = 5
         self.cell(bullet_w, 5.5, "\u2022")
-        self.multi_cell(self.CONTENT_W - indent - bullet_w, 5.5, text)
+        self.multi_cell(self.CONTENT_W - indent - bullet_w, 5.5, text, align="L")
         self.ln(1)
 
     def numbered_item(self, num, text, indent=6):
@@ -222,7 +221,7 @@ class Manual(FPDF):
         self.cell(indent)
         num_w = 8
         self.cell(num_w, 5.5, f"{num}.")
-        self.multi_cell(self.CONTENT_W - indent - num_w, 5.5, text)
+        self.multi_cell(self.CONTENT_W - indent - num_w, 5.5, text, align="L")
         self.ln(1)
 
     def code_block(self, text):
@@ -272,7 +271,7 @@ class Manual(FPDF):
         self.cell(0, 5, "NOTE", new_x="LMARGIN", new_y="NEXT")
         self.set_x(x0 + 4)
         self.set_font("Serif", "", 10)
-        self.multi_cell(self.CONTENT_W - 8, line_h, text)
+        self.multi_cell(self.CONTENT_W - 8, line_h, text, align="L")
         self.set_y(y0 + box_h + 2)
         self.ln(2)
 
