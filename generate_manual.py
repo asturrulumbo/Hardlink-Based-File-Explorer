@@ -321,23 +321,29 @@ def build_manual():
         (2, "     Creating a Hardlink"),
         (2, "     Viewing Hardlinks"),
         (2, "     Deleting a Hardlink"),
-        (1, "7.  Mirror Groups"),
+        (1, "7.  Folder Symlinks (See Also References)"),
+        (2, "     Concept"),
+        (2, "     Creating a Folder Symlink"),
+        (2, "     Viewing Symlink Details"),
+        (2, "     Deleting a Folder Symlink"),
+        (2, "     How Symlinks Appear in the File Browser"),
+        (1, "8.  Mirror Groups"),
         (2, "     Concept Overview"),
         (2, "     Creating a Mirror Group"),
         (2, "     Managing Mirror Groups"),
         (2, "     Automatic Synchronization"),
         (2, "     Scanning for Existing Mirrors"),
-        (1, "8.  Intersection Search"),
+        (1, "9.  Intersection Search"),
         (2, "     Running a Search"),
         (2, "     Interpreting Results"),
-        (1, "9.  Keyboard Shortcuts & Context Menus"),
-        (1, "10. Configuration and Data Storage"),
-        (1, "11. Example Workflows"),
+        (1, "10. Keyboard Shortcuts & Context Menus"),
+        (1, "11. Configuration and Data Storage"),
+        (1, "12. Example Workflows"),
         (2, "     Scholarly Archive with Multilingual Names"),
         (2, "     Thematic Cross-Referencing"),
         (2, "     Periodical with Alternate Titles"),
-        (1, "12. Troubleshooting"),
-        (1, "13. Appendix: Technical Reference"),
+        (1, "13. Troubleshooting"),
+        (1, "14. Appendix: Technical Reference"),
     ]
     for level, text in toc:
         pdf.toc_entry(level, text)
@@ -425,9 +431,11 @@ def build_manual():
         "HardlinkManager.exe version 0.2.0. It is organized to be read sequentially by "
         "new users or consulted by section as a reference. Chapter 2 introduces the concept "
         "of hardlinks for readers unfamiliar with them. Chapters 3\u20134 cover running the "
-        "executable and first launch. Chapters 5\u20138 describe the application's features "
-        "in detail. Chapters 9\u201310 cover shortcuts and configuration. Chapter 11 provides "
-        "worked examples, and Chapters 12\u201313 address troubleshooting and technical details."
+        "executable and first launch. Chapters 5\u20139 describe the application's features "
+        "in detail, including hardlink operations, folder symlinks, mirror groups, and "
+        "intersection search. Chapters 10\u201311 cover shortcuts and configuration. Chapter "
+        "12 provides worked examples, and Chapters 13\u201314 address troubleshooting and "
+        "technical details."
     )
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -465,15 +473,13 @@ def build_manual():
 
     pdf.section_title("Hardlinks vs. Symbolic Links")
     pdf.body(
-        "Symbolic links (symlinks) are pointers that store the path to a target file. "
-        "They are fundamentally different from hardlinks and are deliberately excluded "
-        "from all operations in HardlinkManager.exe. The following table summarizes "
-        "the key differences:"
+        "Symbolic links (symlinks) are pointers that store the path to a target. "
+        "They are fundamentally different from hardlinks:"
     )
     pdf.bullet(
-        "A hardlink is a direct reference to the file's data (its inode). A symbolic "
+        "A hardlink is a direct reference to a file's data (its inode). A symbolic "
         "link is an indirect reference that stores a path string pointing to another "
-        "filename."
+        "name."
     )
     pdf.bullet(
         "Hardlinks remain valid if the original filename is renamed or moved (within "
@@ -485,28 +491,32 @@ def build_manual():
         "links are separate filesystem objects with their own inodes."
     )
     pdf.bullet(
-        "Hardlinks are restricted to the same volume. Symbolic links can point across "
-        "volumes and even to network paths."
+        "Hardlinks are restricted to the same volume and cannot link directories. "
+        "Symbolic links can point across volumes and can reference directories."
     )
     pdf.body(
-        "Because HardlinkManager.exe relies on inode identity to track, synchronize, "
-        "and search for files, symbolic links are incompatible with its design. A "
-        "symbolic link does not share an inode with its target, so it would not be "
-        "detected by intersection search, would not synchronize correctly in mirror "
-        "groups, and could introduce dangling references if the target were moved. "
-        "For these reasons, the application filters symbolic links out of all file "
-        "listings, directory scans, and hardlink operations."
+        "HardlinkManager.exe uses hardlinks for files and symbolic links for a "
+        "complementary purpose: folder symlinks serve as \"See Also\" references "
+        "that point to related directories elsewhere in the archive. These folder "
+        "symlinks are treated as opaque entries\u2014they are synced across mirror "
+        "groups as pointers, but their contents are never traversed or duplicated. "
+        "See Chapter 7 for full details."
+    )
+    pdf.note_box(
+        "File-level symlinks are still filtered from hardlink operations and "
+        "intersection search, since they do not share an inode with their target. "
+        "Only folder symlinks (directory symlinks) are supported as See Also references."
     )
 
     pdf.section_title("Constraints and Limitations")
     pdf.bullet("Same volume only: Hardlinks can only be created between files on the same disk "
                "partition or volume. Cross-drive hardlinks are not possible.")
     pdf.bullet("Files only: Directories cannot be hardlinked. Mirror Groups work around this by "
-               "synchronizing individual files within directories.")
-    pdf.bullet("Regular files only: Symbolic links (symlinks) are excluded from all operations. "
-               "The application will not display symlinks in file listings, will not allow "
-               "them as sources for hardlink creation, and will skip them during mirror group "
-               "synchronization and scanning. See Section 2.3 for the rationale.")
+               "synchronizing individual files within directories. Folder symlinks provide a "
+               "complementary way to reference related directories (see Chapter 7).")
+    pdf.bullet("Symlink privileges (Windows): Creating symbolic links on Windows may require "
+               "administrator privileges or Developer Mode. HardlinkManager.exe requests "
+               "elevation via UAC when needed.")
     pdf.bullet("NTFS required (Windows): Hardlinks require an NTFS-formatted volume. FAT32 and "
                "exFAT do not support them.")
     pdf.bullet("Permissions: On some systems, creating hardlinks may require elevated privileges.")
@@ -622,13 +632,17 @@ def build_manual():
     pdf.section_title("File List and Tabs")
     pdf.body(
         "When you open a directory, its contents are displayed in the right-hand panel as a "
-        "table. Only regular files and directories are shown; symbolic links are filtered "
-        "out and will not appear in the listing. The table includes the following columns:"
+        "table showing regular files, subdirectories, and folder symlinks. The table includes "
+        "the following columns:"
     )
-    pdf.bullet("Name \u2014 The file or subdirectory name.")
-    pdf.bullet("Size \u2014 The file size in a human-readable format.")
-    pdf.bullet("Hardlink Count \u2014 The number of hardlinks to the same underlying data.")
-    pdf.bullet("Inode \u2014 The filesystem inode (or file index number on Windows).")
+    pdf.bullet("Name \u2014 The file, subdirectory, or symlink name.")
+    pdf.bullet("Type \u2014 \"Folder\", \"File\", \"Symlink\", or \"Symlink (broken)\" if the "
+               "target no longer exists.")
+    pdf.bullet("Size \u2014 The file size in a human-readable format. For symlinks, this column "
+               "displays the target path instead.")
+    pdf.bullet("Hardlink Count \u2014 The number of hardlinks to the same underlying data "
+               "(blank for symlinks).")
+    pdf.bullet("Inode \u2014 The filesystem inode (blank for symlinks).")
     pdf.body(
         "Multiple directories can be open in separate tabs. Click a tab to switch between "
         "open directories. Tabs can be closed individually."
@@ -664,7 +678,8 @@ def build_manual():
     pdf.note_box(
         "Both the source file and destination folder must reside on the same filesystem "
         "volume. If they do not, the application will display an error. The source must "
-        "be a regular file; symbolic links cannot be used as a hardlink source."
+        "be a regular file. To reference a directory, use a folder symlink instead "
+        "(see Chapter 7)."
     )
 
     pdf.section_title("Viewing Hardlinks")
@@ -694,7 +709,83 @@ def build_manual():
     )
 
     # ═══════════════════════════════════════════════════════════════════════
-    # CHAPTER 7 \u2014 MIRROR GROUPS
+    # CHAPTER 7 \u2014 FOLDER SYMLINKS
+    # ═══════════════════════════════════════════════════════════════════════
+    pdf.chapter_title("Folder Symlinks (See Also References)")
+
+    pdf.section_title("Concept")
+    pdf.body(
+        "While hardlinks connect individual files across directories, there are cases where "
+        "you want to reference an entire folder rather than its contents. For example, a "
+        "thematic category folder might want to point to a related author folder elsewhere "
+        "in the archive as a \"See Also\" cross-reference."
+    )
+    pdf.body(
+        "HardlinkManager.exe supports this through folder symlinks\u2014symbolic links that "
+        "point to directories. These symlinks are treated as opaque entries: only the symlink "
+        "itself is managed, never the contents of the target directory. This means creating a "
+        "folder symlink does not duplicate or hardlink any files; it simply places a named "
+        "pointer in the current directory."
+    )
+    pdf.body(
+        "Folder symlinks are fully integrated with mirror groups: when a folder symlink is "
+        "created inside a mirror group directory, it is automatically replicated to all other "
+        "mirrors in the group (pointing to the same target). Deleting a folder symlink from "
+        "a mirror group removes it from all mirrors."
+    )
+
+    pdf.section_title("Creating a Folder Symlink")
+    pdf.body("To create a folder symlink:")
+    pdf.numbered_item(1, "Right-click on the empty background area of the file browser, or use "
+                         "Actions > Create Folder Symlink... from the menu bar.")
+    pdf.numbered_item(2, "In the dialog, browse to and select the target folder (the directory "
+                         "the symlink will point to).")
+    pdf.numbered_item(3, "Enter a name for the symlink. By default, the target folder's name "
+                         "is used.")
+    pdf.numbered_item(4, "Click Create. The symlink appears in the current directory.")
+    pdf.body(
+        "If the current directory belongs to a mirror group with synchronization enabled, "
+        "the symlink is automatically replicated to all other mirrors in the group."
+    )
+    pdf.note_box(
+        "On Windows, creating symbolic links may require administrator privileges or "
+        "Developer Mode to be enabled. HardlinkManager.exe requests UAC elevation "
+        "when needed."
+    )
+
+    pdf.section_title("Viewing Symlink Details")
+    pdf.body("To inspect a folder symlink:")
+    pdf.numbered_item(1, "Right-click the symlink in the file browser.")
+    pdf.numbered_item(2, "Select \"View Symlink Details\" from the context menu.")
+    pdf.body(
+        "The dialog displays the symlink's name, location, target path, and status "
+        "(OK or broken). If the target exists, a \"Go to Target\" button navigates to "
+        "the target directory in the file browser."
+    )
+
+    pdf.section_title("Deleting a Folder Symlink")
+    pdf.body(
+        "Right-click the symlink and select \"Delete Symlink\", or select it and press "
+        "the Delete key. A confirmation dialog shows the symlink's target path and "
+        "confirms that only the symlink is removed\u2014the target folder is never affected."
+    )
+    pdf.body(
+        "If the symlink is inside a mirror group, the deletion is propagated to all "
+        "other mirrors: matching symlinks (same relative path and target) are removed "
+        "from every folder in the group."
+    )
+
+    pdf.section_title("How Symlinks Appear in the File Browser")
+    pdf.body(
+        "Folder symlinks are displayed with a distinct type label. The Type column shows "
+        "\"Symlink\" (or \"Symlink (broken)\" if the target no longer exists), and the Size "
+        "column displays the target path instead of a file size. Right-clicking a symlink "
+        "opens a dedicated context menu with options to open the target folder, view details, "
+        "or delete the symlink."
+    )
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # CHAPTER 8 \u2014 MIRROR GROUPS
     # ═══════════════════════════════════════════════════════════════════════
     pdf.chapter_title("Mirror Groups")
 
@@ -755,7 +846,9 @@ def build_manual():
         "When a new file is detected in any watched directory, the system waits briefly "
         "(0.5 seconds by default) to allow the file write to complete, then creates hardlinks "
         "to that file in every other directory in the group. The relative path within the "
-        "directory is preserved, so subdirectory structures are maintained."
+        "directory is preserved, so subdirectory structures are maintained. Folder symlinks "
+        "created inside a watched directory are also automatically replicated as symlinks "
+        "(not traversed) to every other mirror."
     )
     pdf.note_box(
         "The filesystem watcher runs in a background thread and is designed to be "
@@ -854,6 +947,14 @@ def build_manual():
     pdf.bullet("Add to Existing Mirror...")
     pdf.bullet("View Hardlink Mirrors")
     pdf.bullet("Rename / Delete")
+    pdf.subsection_title("Symlink Context Menu")
+    pdf.bullet("Open Target Folder \u2014 Navigate to the symlink's target directory.")
+    pdf.bullet("Open in New Tab")
+    pdf.bullet("View Symlink Details \u2014 Show target path and status.")
+    pdf.bullet("Delete Symlink")
+    pdf.subsection_title("Background Context Menu (empty area)")
+    pdf.bullet("Paste")
+    pdf.bullet("Create Folder Symlink...")
 
     # ═══════════════════════════════════════════════════════════════════════
     # CHAPTER 10 \u2014 CONFIGURATION AND DATA STORAGE
@@ -962,14 +1063,20 @@ def build_manual():
         "has no additional hardlinks. This is the default state for any newly created file."
     )
 
-    pdf.subsection_title("Symbolic links do not appear in file listings")
+    pdf.subsection_title("Folder symlink shows \"Symlink (broken)\"")
     pdf.body(
-        "This is by design. HardlinkManager.exe operates exclusively on regular files and "
-        "deliberately filters out symbolic links from the file browser, directory scans, "
-        "mirror group synchronization, and intersection search. Symbolic links do not share "
-        "an inode with their target and are incompatible with the application's hardlink-based "
-        "approach. If you need a file to appear in multiple locations, create a hardlink to "
-        "it instead of a symbolic link."
+        "A broken symlink means the target directory no longer exists at the recorded path. "
+        "This can happen if the target was moved, renamed, or deleted. Right-click the symlink "
+        "and select \"View Symlink Details\" to see the stored target path, then either "
+        "restore the target or delete the broken symlink."
+    )
+
+    pdf.subsection_title("\"Permission denied\" when creating folder symlinks")
+    pdf.body(
+        "On Windows, creating symbolic links requires administrator privileges or Developer "
+        "Mode to be enabled. Right-click HardlinkManager.exe and select \"Run as "
+        "administrator\", or enable Developer Mode in Windows Settings > Update & Security > "
+        "For developers."
     )
 
     pdf.subsection_title("Scanning does not find expected mirrors")
@@ -996,18 +1103,21 @@ def build_manual():
 
     pdf.section_title("Core Modules")
     pdf.subsection_title("hardlink_ops.py")
-    pdf.body("Provides create_hardlink(), delete_hardlink(), and find_hardlinks() functions. "
-             "Validates same-volume constraints before operations.")
+    pdf.body("Provides create_hardlink(), delete_hardlink(), and find_hardlinks() for file "
+             "hardlinks, plus create_folder_symlink() and delete_folder_symlink() for directory "
+             "symlinks. Validates same-volume constraints for hardlinks.")
     pdf.subsection_title("mirror_groups.py")
     pdf.body("Implements MirrorGroupRegistry for persistent group management. Includes both "
              "content-based (SHA-256 fingerprinting) and hardlink-based (union-find) mirror "
              "discovery algorithms.")
     pdf.subsection_title("sync.py")
-    pdf.body("Handles file synchronization across mirror group directories. Preserves relative "
-             "path structure and creates intermediate directories as needed.")
+    pdf.body("Handles file and folder symlink synchronization across mirror group directories. "
+             "Preserves relative path structure. Folder symlinks are synced as opaque entries "
+             "(same target pointer) without traversing their contents.")
     pdf.subsection_title("watcher.py")
     pdf.body("Filesystem event monitoring using the watchdog library. Implements debounced, "
-             "thread-safe watching with per-group toggle support.")
+             "thread-safe watching with per-group toggle support. Handles both file creation "
+             "events and directory creation events (for symlink folders).")
     pdf.subsection_title("search.py")
     pdf.body("Inode-based intersection search across multiple directories with optional "
              "filename pattern filtering.")
