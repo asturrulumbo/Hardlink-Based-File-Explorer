@@ -5,7 +5,13 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Callable, Optional
 
-from hardlink_manager.utils.filesystem import format_file_size, get_hardlink_count, get_inode
+from hardlink_manager.utils.filesystem import (
+    format_file_size,
+    get_hardlink_count,
+    get_inode,
+    is_symlink_broken,
+    read_symlink_target,
+)
 
 
 class DirectoryTree(ttk.Frame):
@@ -120,7 +126,7 @@ class FileListPanel(ttk.Frame):
 
     COLUMNS = ("name", "type", "size", "hardlinks", "inode")
     HEADERS = {"name": "Name", "type": "Type", "size": "Size", "hardlinks": "Links", "inode": "Inode"}
-    WIDTHS = {"name": 280, "type": 70, "size": 80, "hardlinks": 60, "inode": 100}
+    WIDTHS = {"name": 280, "type": 100, "size": 80, "hardlinks": 60, "inode": 100}
 
     def __init__(self, parent, on_file_select: Optional[Callable[[str], None]] = None,
                  on_file_open: Optional[Callable[[str], None]] = None,
@@ -134,6 +140,7 @@ class FileListPanel(ttk.Frame):
         self.current_dir: Optional[str] = None
         self._item_paths: dict[str, str] = {}   # tree item id -> filesystem path
         self._item_is_dir: dict[str, bool] = {}  # tree item id -> True if directory
+        self._item_is_symlink: dict[str, bool] = {}  # tree item id -> True if symlink
 
         # Path bar with Up button
         path_bar = ttk.Frame(self)
@@ -184,6 +191,7 @@ class FileListPanel(ttk.Frame):
         self.path_var.set(path)
         self._item_paths.clear()
         self._item_is_dir.clear()
+        self._item_is_symlink.clear()
 
         # Clear existing items
         for item in self.file_tree.get_children():
@@ -197,7 +205,25 @@ class FileListPanel(ttk.Frame):
         try:
             for entry in os.scandir(path):
                 try:
-                    if entry.is_dir(follow_symlinks=False):
+                    if entry.is_symlink():
+                        # Folder symlinks: shown as a distinct type
+                        broken = is_symlink_broken(entry.path)
+                        try:
+                            target = read_symlink_target(entry.path)
+                        except OSError:
+                            target = "?"
+                        type_label = "Symlink (broken)" if broken else "Symlink"
+                        dir_entries.append({
+                            "name": entry.name,
+                            "type": type_label,
+                            "size": target,
+                            "hardlinks": "",
+                            "inode": "",
+                            "path": entry.path,
+                            "is_dir": True,
+                            "is_symlink": True,
+                        })
+                    elif entry.is_dir(follow_symlinks=False):
                         dir_entries.append({
                             "name": entry.name,
                             "type": "Folder",
@@ -206,6 +232,7 @@ class FileListPanel(ttk.Frame):
                             "inode": "",
                             "path": entry.path,
                             "is_dir": True,
+                            "is_symlink": False,
                         })
                     elif entry.is_file(follow_symlinks=False):
                         # Use os.stat() instead of entry.stat() because
@@ -219,6 +246,7 @@ class FileListPanel(ttk.Frame):
                             "inode": st.st_ino,
                             "path": entry.path,
                             "is_dir": False,
+                            "is_symlink": False,
                         })
                 except OSError:
                     continue
@@ -243,6 +271,7 @@ class FileListPanel(ttk.Frame):
             )
             self._item_paths[item_id] = e["path"]
             self._item_is_dir[item_id] = e["is_dir"]
+            self._item_is_symlink[item_id] = e.get("is_symlink", False)
 
     def get_selected_file(self) -> Optional[str]:
         """Get the selected file path (returns None if a folder is selected)."""
@@ -274,6 +303,13 @@ class FileListPanel(ttk.Frame):
         sel = self.file_tree.selection()
         if sel:
             return self._item_is_dir.get(sel[0], False)
+        return False
+
+    def is_selected_symlink(self) -> bool:
+        """Check whether the currently selected item is a symlink."""
+        sel = self.file_tree.selection()
+        if sel:
+            return self._item_is_symlink.get(sel[0], False)
         return False
 
     def _go_up(self):
@@ -464,3 +500,6 @@ class TabbedFileBrowser(ttk.Frame):
 
     def is_selected_dir(self) -> bool:
         return self.active_panel.is_selected_dir()
+
+    def is_selected_symlink(self) -> bool:
+        return self.active_panel.is_selected_symlink()

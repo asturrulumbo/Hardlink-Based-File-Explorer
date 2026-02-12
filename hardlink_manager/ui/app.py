@@ -7,17 +7,24 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from hardlink_manager.core.mirror_groups import MirrorGroupRegistry
-from hardlink_manager.core.sync import delete_from_group, sync_group
+from hardlink_manager.core.sync import (
+    delete_from_group,
+    delete_symlink_from_group,
+    sync_group,
+    sync_symlink_to_group,
+)
 from hardlink_manager.core.watcher import MirrorGroupWatcher
 from hardlink_manager.ui.file_browser import DirectoryTree, FileListPanel, TabbedFileBrowser
 from hardlink_manager.ui.mirror_panel import MirrorGroupPanel
 from hardlink_manager.ui.search_panel import SearchPanel
 from hardlink_manager.ui.dialogs import (
     CreateHardlinkDialog,
+    CreateSymlinkDialog,
     DeleteHardlinkDialog,
     RenameDialog,
     ViewHardlinksDialog,
     ViewMirrorsDialog,
+    ViewSymlinkDialog,
 )
 from hardlink_manager.utils.filesystem import (
     copy_item,
@@ -25,8 +32,10 @@ from hardlink_manager.utils.filesystem import (
     format_file_size,
     get_hardlink_count,
     get_inode,
+    is_symlink,
     move_item,
     open_file,
+    read_symlink_target,
     reveal_in_explorer,
     sanitize_filename,
 )
@@ -95,6 +104,9 @@ class HardlinkManagerApp:
         actions_menu.add_separator()
         actions_menu.add_command(label="Create Hardlink...", command=self._create_hardlink_action)
         actions_menu.add_command(label="View Hardlinks...", command=self._view_hardlinks_action)
+        actions_menu.add_separator()
+        actions_menu.add_command(label="Create Folder Symlink...", command=self._create_symlink_action)
+        actions_menu.add_command(label="View Symlink Details...", command=self._view_symlink_action)
 
         # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -201,9 +213,19 @@ class HardlinkManagerApp:
         self.folder_context_menu.add_command(label="Rename...", command=self._rename_action)
         self.folder_context_menu.add_command(label="Delete", command=self._delete_action)
 
+        # -- Symlink context menu --
+        self.symlink_context_menu = tk.Menu(self.root, tearoff=0)
+        self.symlink_context_menu.add_command(label="Open Target Folder", command=self._open_symlink_target)
+        self.symlink_context_menu.add_command(label="Open in New Tab", command=self._open_in_new_tab)
+        self.symlink_context_menu.add_command(label="View Symlink Details", command=self._view_symlink_action)
+        self.symlink_context_menu.add_separator()
+        self.symlink_context_menu.add_command(label="Delete Symlink", command=self._delete_action)
+
         # -- Background context menu (right-click on empty area) --
         self.bg_context_menu = tk.Menu(self.root, tearoff=0)
         self.bg_context_menu.add_command(label="Paste", command=self._paste_action)
+        self.bg_context_menu.add_separator()
+        self.bg_context_menu.add_command(label="Create Folder Symlink...", command=self._create_symlink_action)
 
         # Bind right-click on all file list tabs
         self.file_list.bind_tree("<Button-3>", self._show_context_menu)
@@ -225,13 +247,15 @@ class HardlinkManagerApp:
             # (preserves multi-selection for right-click)
             if item not in tree.selection():
                 tree.selection_set(item)
-            if self.file_list.is_selected_dir():
+            if self.file_list.is_selected_symlink():
+                self.symlink_context_menu.tk_popup(event.x_root, event.y_root)
+            elif self.file_list.is_selected_dir():
                 self.folder_context_menu.tk_popup(event.x_root, event.y_root)
             else:
                 self.file_context_menu.tk_popup(event.x_root, event.y_root)
         else:
-            # Right-click on empty area — show paste menu
-            if self._clipboard and self.file_list.current_dir:
+            # Right-click on empty area — show paste/create-symlink menu
+            if self.file_list.current_dir:
                 self.bg_context_menu.tk_popup(event.x_root, event.y_root)
 
     # -- Watcher callbacks --
@@ -552,6 +576,62 @@ class HardlinkManagerApp:
         )
         dlg.wait_window()
 
+    # -- Symlink actions --
+
+    def _create_symlink_action(self):
+        """Create a folder symlink in the current directory."""
+        if not self.file_list.current_dir:
+            messagebox.showinfo("No Folder Open", "Open a folder first.", parent=self.root)
+            return
+        dlg = CreateSymlinkDialog(self.root, self.file_list.current_dir)
+        self.root.wait_window(dlg)
+        if dlg.result:
+            self._set_status(f"Symlink created: {dlg.result}")
+            # If the current dir is in a mirror group, sync the new symlink
+            result = self.registry.find_group_for_path(dlg.result)
+            if result:
+                group, _root = result
+                if group.sync_enabled:
+                    try:
+                        synced = sync_symlink_to_group(dlg.result, group)
+                        if synced:
+                            self._set_status(
+                                f"Symlink created and synced to {len(synced)} mirror(s)"
+                            )
+                    except Exception:
+                        pass
+            self.file_list.load_directory(self.file_list.current_dir)
+
+    def _view_symlink_action(self):
+        """Show details of the selected symlink."""
+        selected = self.file_list.get_selected_path()
+        if not selected or not os.path.islink(selected):
+            messagebox.showinfo("No Symlink Selected",
+                                "Please select a symlink first.", parent=self.root)
+            return
+        dlg = ViewSymlinkDialog(
+            self.root, selected,
+            on_navigate=self._navigate_to_folder,
+        )
+        dlg.wait_window()
+
+    def _open_symlink_target(self):
+        """Navigate to the target folder of the selected symlink."""
+        selected = self.file_list.get_selected_path()
+        if not selected or not os.path.islink(selected):
+            return
+        try:
+            target = read_symlink_target(selected)
+            if os.path.isdir(target):
+                self.file_list.load_directory(target)
+                self._set_status(f"Viewing symlink target: {target}")
+            else:
+                messagebox.showwarning("Broken Symlink",
+                                       f"Target no longer exists:\n{target}",
+                                       parent=self.root)
+        except OSError as e:
+            messagebox.showerror("Error", str(e), parent=self.root)
+
     def _delete_action(self):
         """Delete the selected file(s) or folder(s)."""
         selected_paths = self.file_list.get_selected_paths()
@@ -569,7 +649,37 @@ class HardlinkManagerApp:
             self.file_list.load_directory(self.file_list.current_dir)
 
     def _delete_single(self, selected: str):
-        """Delete a single file or folder with detailed confirmation."""
+        """Delete a single file, folder, or symlink with detailed confirmation."""
+        if os.path.islink(selected):
+            name = os.path.basename(selected)
+            try:
+                target = read_symlink_target(selected)
+            except OSError:
+                target = "(unreadable)"
+            if not messagebox.askyesno(
+                "Delete Symlink",
+                f"Remove symlink '{name}'?\n\n"
+                f"Points to: {target}\n\n"
+                "Only the symlink is removed; the target folder is not affected.",
+                parent=self.root,
+            ):
+                return
+            # If in a mirror group, delete from all folders
+            result = self.registry.find_group_for_path(selected)
+            if result:
+                group, _root = result
+                try:
+                    deleted = delete_symlink_from_group(selected, group)
+                    self._set_status(f"Symlink removed from {len(deleted)} folder(s).")
+                except Exception as e:
+                    messagebox.showerror("Error", str(e), parent=self.root)
+            else:
+                try:
+                    os.unlink(selected)
+                    self._set_status(f"Deleted symlink: {name}")
+                except Exception as e:
+                    messagebox.showerror("Error", str(e), parent=self.root)
+            return
         if os.path.isdir(selected):
             name = os.path.basename(selected)
             if not messagebox.askyesno(
@@ -624,6 +734,15 @@ class HardlinkManagerApp:
         errors = []
         for path in paths:
             try:
+                if os.path.islink(path):
+                    # Symlink: delete from mirror group or just unlink
+                    result = self.registry.find_group_for_path(path)
+                    if result:
+                        delete_symlink_from_group(path, result[0])
+                    else:
+                        os.unlink(path)
+                    deleted_count += 1
+                    continue
                 # Check mirror group membership for files
                 if os.path.isfile(path):
                     result = self.registry.find_group_for_path(path)

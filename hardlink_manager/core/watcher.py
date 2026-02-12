@@ -6,10 +6,14 @@ import time
 from typing import Callable, Optional
 
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler, FileCreatedEvent
+from watchdog.events import (
+    FileSystemEventHandler,
+    FileCreatedEvent,
+    DirCreatedEvent,
+)
 
 from hardlink_manager.core.mirror_groups import MirrorGroup, MirrorGroupRegistry
-from hardlink_manager.core.sync import sync_file_to_group
+from hardlink_manager.core.sync import sync_file_to_group, sync_symlink_to_group
 
 
 class _DebouncedHandler(FileSystemEventHandler):
@@ -27,12 +31,28 @@ class _DebouncedHandler(FileSystemEventHandler):
         self._timer: Optional[threading.Timer] = None
 
     def on_created(self, event):
-        if event.is_directory:
-            return
-        if not isinstance(event, FileCreatedEvent):
+        src_path = os.path.abspath(event.src_path)
+
+        # Handle directory creation events: sync if it's a symlink folder
+        if event.is_directory or isinstance(event, DirCreatedEvent):
+            if os.path.islink(src_path):
+                result = self.registry.find_group_for_path(src_path)
+                if result is None:
+                    return
+                group, _root_folder = result
+                if not group.sync_enabled:
+                    return
+                # Schedule symlink sync through the same debounce path
+                with self._lock:
+                    self._pending[src_path] = time.time() + self.debounce_seconds
+                    if self._timer is None or not self._timer.is_alive():
+                        self._timer = threading.Timer(self.debounce_seconds, self._flush)
+                        self._timer.daemon = True
+                        self._timer.start()
             return
 
-        src_path = os.path.abspath(event.src_path)
+        if not isinstance(event, FileCreatedEvent):
+            return
 
         # Check if this path is inside a sync-enabled mirror group folder
         result = self.registry.find_group_for_path(src_path)
@@ -76,7 +96,7 @@ class _DebouncedHandler(FileSystemEventHandler):
 
         # Perform syncs outside the lock
         for path in to_sync:
-            if not os.path.exists(path):
+            if not os.path.islink(path) and not os.path.exists(path):
                 continue
             result = self.registry.find_group_for_path(path)
             if result is None:
@@ -85,7 +105,10 @@ class _DebouncedHandler(FileSystemEventHandler):
             if not group.sync_enabled:
                 continue
             try:
-                created = sync_file_to_group(path, group)
+                if os.path.islink(path):
+                    created = sync_symlink_to_group(path, group)
+                else:
+                    created = sync_file_to_group(path, group)
                 if created and self.on_sync:
                     self.on_sync(path, created)
             except Exception:

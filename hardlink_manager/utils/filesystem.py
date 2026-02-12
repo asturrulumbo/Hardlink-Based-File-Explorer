@@ -86,6 +86,60 @@ def is_regular_file(path: str) -> bool:
     return os.path.isfile(path) and not os.path.islink(path)
 
 
+def is_symlink(path: str) -> bool:
+    """Check if a path is a symlink."""
+    return os.path.islink(path)
+
+
+def create_symlink(target: str, link_path: str) -> str:
+    """Create a symbolic link pointing to target.
+
+    Always creates a directory symlink (target_is_directory=True) since this
+    application only supports folder symlinks.
+
+    Args:
+        target: The absolute path the symlink will point to.
+        link_path: Where the symlink will be created.
+
+    Returns:
+        The created symlink path.
+
+    Raises:
+        FileNotFoundError: If target does not exist.
+        FileExistsError: If link_path already exists.
+        OSError: If symlink creation fails (e.g. insufficient privileges on Windows).
+    """
+    target = os.path.abspath(target)
+    link_path = os.path.abspath(link_path)
+
+    if not os.path.exists(target):
+        raise FileNotFoundError(f"Symlink target not found: {target}")
+
+    if not os.path.isdir(target):
+        raise ValueError(f"Symlink target must be a directory: {target}")
+
+    if os.path.exists(link_path) or os.path.islink(link_path):
+        raise FileExistsError(f"Path already exists: {link_path}")
+
+    os.symlink(target, link_path, target_is_directory=True)
+    return link_path
+
+
+def read_symlink_target(path: str) -> str:
+    """Read and return the absolute target of a symlink."""
+    target = os.readlink(path)
+    if not os.path.isabs(target):
+        target = os.path.normpath(os.path.join(os.path.dirname(path), target))
+    return target
+
+
+def is_symlink_broken(path: str) -> bool:
+    """Check if a symlink is dangling (target no longer exists)."""
+    if not os.path.islink(path):
+        return False
+    return not os.path.exists(path)
+
+
 def open_file(path: str) -> None:
     """Open a file with the system's default application."""
     import subprocess

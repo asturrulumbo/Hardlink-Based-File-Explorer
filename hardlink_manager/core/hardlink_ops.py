@@ -1,12 +1,15 @@
-"""Core hardlink operations: create, delete, and view hardlinks."""
+"""Core hardlink and symlink operations: create, delete, and view links."""
 
 import os
 from typing import Optional
 
 from hardlink_manager.utils.filesystem import (
+    create_symlink,
     get_inode,
     is_regular_file,
     is_same_volume,
+    is_symlink,
+    read_symlink_target,
 )
 
 
@@ -131,3 +134,56 @@ def find_all_hardlinks(file_path: str, search_dirs: list[str]) -> list[str]:
             unique.append(normed)
 
     return sorted(unique)
+
+
+def create_folder_symlink(target_dir: str, dest_dir: str,
+                          link_name: Optional[str] = None) -> str:
+    """Create a symlink to a folder inside dest_dir.
+
+    Args:
+        target_dir: The existing directory the symlink should point to.
+        dest_dir: The directory where the symlink will be created.
+        link_name: Name for the symlink. Defaults to the target folder's basename.
+
+    Returns:
+        The full path of the created symlink.
+
+    Raises:
+        FileNotFoundError: If target_dir does not exist.
+        ValueError: If target_dir is not a directory.
+        NotADirectoryError: If dest_dir is not a directory.
+        FileExistsError: If an entry with link_name already exists in dest_dir.
+        OSError: If symlink creation fails.
+    """
+    target_dir = os.path.abspath(target_dir)
+    dest_dir = os.path.abspath(dest_dir)
+
+    if not os.path.isdir(dest_dir):
+        raise NotADirectoryError(f"Destination is not a directory: {dest_dir}")
+
+    if link_name is None:
+        link_name = os.path.basename(target_dir)
+
+    link_path = os.path.join(dest_dir, link_name)
+    return create_symlink(target_dir, link_path)
+
+
+def delete_folder_symlink(path: str) -> None:
+    """Delete a folder symlink (removes the link, not the target).
+
+    Args:
+        path: Path of the symlink to remove.
+
+    Raises:
+        FileNotFoundError: If path does not exist (not even as a dangling link).
+        ValueError: If path is not a symlink.
+        OSError: If deletion fails.
+    """
+    path = os.path.abspath(path)
+
+    if not os.path.islink(path):
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Symlink not found: {path}")
+        raise ValueError(f"Path is not a symlink: {path}")
+
+    os.unlink(path)
